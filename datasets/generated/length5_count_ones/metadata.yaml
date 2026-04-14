@@ -1,0 +1,63 @@
+name: length5_count_ones
+task: count_ones
+sequence_length: 5
+requested_size: 32
+generated_size: 32
+unique_space_size: 32
+seed: 101
+split_ratios:
+  train: 0.7
+  val: 0.15
+  test: 0.15
+split_counts:
+  train: 22
+  val: 4
+  test: 6
+label_noise_pct: 0.0
+noise_scope: train
+noise_summary:
+  train: 0
+  val: 0
+  test: 0
+label_distribution:
+  full:
+    0: 1
+    1: 5
+    2: 10
+    3: 10
+    4: 5
+    5: 1
+  train:
+    0: 1
+    1: 5
+    2: 7
+    3: 6
+    4: 2
+    5: 1
+  val:
+    3: 1
+    4: 3
+  test:
+    2: 3
+    3: 3
+clean_label_distribution:
+  full:
+    0: 1
+    1: 5
+    2: 10
+    3: 10
+    4: 5
+    5: 1
+  train:
+    0: 1
+    1: 5
+    2: 7
+    3: 6
+    4: 2
+    5: 1
+  val:
+    3: 1
+    4: 3
+  test:
+    2: 3
+    3: 3

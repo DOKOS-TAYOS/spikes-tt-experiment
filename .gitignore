@@ -1,0 +1,14 @@
+.venv/
+.tmp/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+output/raw_data/*
+output/processed_data/*
+output/plots/*
+output/images/*
+!output/raw_data/.gitkeep
+!output/processed_data/.gitkeep
+!output/plots/.gitkeep
+!output/images/.gitkeep

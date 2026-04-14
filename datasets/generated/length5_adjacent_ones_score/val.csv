@@ -1,0 +1,5 @@
+sample_id,spike_train,clean_label,label,is_noisy,split
+22,10110,1,1,False,val
+23,00000,0,0,False,val
+24,01010,0,0,False,val
+25,01100,1,1,False,val

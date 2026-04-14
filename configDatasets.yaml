@@ -1,0 +1,24 @@
+defaults:
+  split_ratios:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+  label_noise_pct: 0.0
+  noise_scope: train
+
+datasets:
+  - name: length5_count_ones
+    task: count_ones
+    sequence_length: 5
+    dataset_size: 32
+    seed: 101
+  - name: length5_count_zeros
+    task: count_zeros
+    sequence_length: 5
+    dataset_size: 32
+    seed: 102
+  - name: length5_adjacent_ones_score
+    task: adjacent_ones_score
+    sequence_length: 5
+    dataset_size: 32
+    seed: 103

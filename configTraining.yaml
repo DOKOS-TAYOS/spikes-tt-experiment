@@ -1,0 +1,17 @@
+defaults:
+  batch_size: 32
+  epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0
+  bond_dim: 8
+  patience: 15
+  device: auto
+  seed: 42
+
+experiments:
+  - name: mps_length5_count_ones
+    dataset_name: length5_count_ones
+  - name: mps_length5_count_zeros
+    dataset_name: length5_count_zeros
+  - name: mps_length5_adjacent_ones_score
+    dataset_name: length5_adjacent_ones_score

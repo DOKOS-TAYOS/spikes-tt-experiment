@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spike-mps-experiment"
+version = "0.1.0"
+description = "Reproducible synthetic dataset generation for spike-train tensor-network experiments."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+  { name = "Alejandro Mata Ali" }
+]
+dependencies = [
+  "PyYAML>=6.0",
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "matplotlib>=3.9",
+  "torch>=2.5",
+  "tensorkrowch>=1.1",
+  "tensor-network-visualization[tensorkrowch]>=2.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4",
+  "ruff>=0.15"
+]
+
+[project.scripts]
+spike-mps-generate = "spike_mps.cli:main"
+spike-mps-clean = "spike_mps.tools:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra -p no:cacheprovider"
+norecursedirs = [".git", ".tmp", ".venv", "_avast_", "pytest-cache-files-*"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+force-exclude = true
+exclude = [".git", ".tmp", ".venv", "_avast_", "pytest-cache-files-*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
