@@ -35,7 +35,7 @@ The intended workflow is:
    - `0 -> [1, 0]`
    - `1 -> [0, 1]`
 3. Form the full input as a tensor-product state over the sequence positions.
-4. Train a one-dimensional MPS classifier using `PyTorch` with `tensorkrowch`.
+4. Train a one-dimensional MPS classifier on the full dataset using `PyTorch` with `tensorkrowch`.
 5. Inspect and visualize the optimized tensor network using TensorNetwork-style visualization tools.
 
 This setup keeps the input map simple and fully discrete, which makes it easier to relate learned tensor entries to symbolic sequence rules.
@@ -79,25 +79,56 @@ The detailed generation workflow is documented in `docs/dataset_generation.md`.
 
 ## MPS Training
 
-Train one experiment defined in `configTraining.yaml`:
+Run these commands from the repository root with the `.venv` already activated.
+
+For the current length-5 experiments, set:
+
+- `bond_dim = sequence_length + 1 = 6`
+- `num_classes = sequence_length + 1 = 6`
+
+Train `count_ones`:
 
 ```bash
 python scripts/train_mps.py --config configTraining.yaml --experiment mps_length5_count_ones
 ```
 
-This trains a multiclass MPS classifier, tracks validation metrics, stores the best checkpoint, and writes training artifacts under `output/processed_data/experiments/<experiment_name>/`.
+Train `count_zeros`:
 
-The classifier is implemented as a manual `tensorkrowch` tensor network with one site tensor per spike-train position. Every site tensor has one physical `input` index, and the last tensor also has the class `output` index. After contracting the network with an encoded spike train, the model returns one score per category. Training uses `abs(score)` inside the cross-entropy loss, and prediction chooses the category with the largest absolute score.
+```bash
+python scripts/train_mps.py --config configTraining.yaml --experiment mps_length5_count_zeros
+```
+
+Train `adjacent_ones_score`:
+
+```bash
+python scripts/train_mps.py --config configTraining.yaml --experiment mps_length5_adjacent_ones_score
+```
+
+Training uses `full.csv` both for optimization and for the checkpoint selection criterion, because the purpose of this experiment is to study the fully memorized limit rather than generalization.
+
+The classifier is implemented as a manual `tensorkrowch` tensor network with one site tensor per spike-train position. The first tensor carries only `input` and `right`, the intermediate tensors carry `left`, `input`, and `right`, and only the last tensor carries the class `output` index. After contracting the network with an encoded spike train, the model returns one score per category. Training uses `abs(score)` inside the cross-entropy loss, and prediction chooses the category with the largest absolute score.
 
 ## Interactive Visualization
 
-Reload the best checkpoint and open the tensor-network visualizer:
+Open the `count_ones` checkpoint:
 
 ```bash
 python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt
 ```
 
-For automated checks or headless environments:
+Open the `count_zeros` checkpoint:
+
+```bash
+python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_zeros/checkpoint_best.pt
+```
+
+Open the `adjacent_ones_score` checkpoint:
+
+```bash
+python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_adjacent_ones_score/checkpoint_best.pt
+```
+
+For automated checks or headless environments, add `--no-show` to any of the commands above:
 
 ```bash
 python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt --no-show

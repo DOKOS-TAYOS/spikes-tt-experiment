@@ -3,7 +3,7 @@ defaults:
   epochs: 100
   learning_rate: 0.001
   weight_decay: 0.0
-  bond_dim: 8
+  bond_dim: 6
   patience: 15
   device: auto
   seed: 42

@@ -19,7 +19,7 @@ def save_checkpoint(
     dataset_name: str,
     experiment_config: dict[str, Any],
     best_epoch: int,
-    best_val_loss: float,
+    best_full_loss: float,
     metrics: dict[str, float],
     seed: int,
 ) -> None:
@@ -30,7 +30,7 @@ def save_checkpoint(
         "model_config": model.config.to_dict(),
         "experiment_config": experiment_config,
         "best_epoch": best_epoch,
-        "best_val_loss": best_val_loss,
+        "best_full_loss": best_full_loss,
         "metrics": metrics,
         "seed": seed,
         "state_dict": model.state_dict(),

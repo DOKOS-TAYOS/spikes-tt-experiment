@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import os
 import subprocess
 import sys
@@ -56,6 +57,36 @@ def test_train_mps_cli_creates_expected_artifacts(workspace_dir: Path) -> None:
     )
     assert metrics["experiment_name"] == "train_cli_example_exp"
     assert metrics["dataset_name"] == "train_cli_example"
+    assert "best_full_loss" in metrics
+    assert "full_loss" in metrics
+    assert "full_accuracy" in metrics
+    assert "best_val_loss" not in metrics
+    assert "test_loss" not in metrics
+    assert "test_accuracy" not in metrics
+
+    with (experiment_dir / "history.csv").open(
+        "r", encoding="utf-8", newline=""
+    ) as file_handle:
+        history_rows = list(csv.DictReader(file_handle))
+    assert history_rows
+    assert "full_loss" in history_rows[0]
+    assert "full_accuracy" in history_rows[0]
+    assert "val_loss" not in history_rows[0]
+    assert "val_accuracy" not in history_rows[0]
+
+    with (
+        workspace_dir / "datasets" / "generated" / "train_cli_example" / "full.csv"
+    ).open("r", encoding="utf-8", newline="") as file_handle:
+        dataset_rows = list(csv.DictReader(file_handle))
+    with (experiment_dir / "confusion_matrix.csv").open(
+        "r", encoding="utf-8", newline=""
+    ) as file_handle:
+        confusion_rows = list(csv.reader(file_handle))
+
+    predicted_total = sum(
+        sum(int(value) for value in row[1:]) for row in confusion_rows[1:]
+    )
+    assert predicted_total == len(dataset_rows)
 
 
 def test_visualize_mps_cli_reloads_checkpoint_and_prepares_visualization(
@@ -144,7 +175,7 @@ def _write_training_config(
                     "epochs": 2,
                     "learning_rate": 1e-2,
                     "weight_decay": 0.0,
-                    "bond_dim": 3,
+                    "bond_dim": 5,
                     "patience": 2,
                     "device": "cpu",
                     "seed": 7,

@@ -74,24 +74,19 @@ def run_training_experiment(
     )
 
     train_loader = DataLoader(
-        dataset_bundle.train_dataset,
+        dataset_bundle.full_dataset,
         batch_size=experiment_config.batch_size,
         shuffle=True,
     )
-    val_loader = DataLoader(
-        dataset_bundle.val_dataset,
-        batch_size=experiment_config.batch_size,
-        shuffle=False,
-    )
-    test_loader = DataLoader(
-        dataset_bundle.test_dataset,
+    full_loader = DataLoader(
+        dataset_bundle.full_dataset,
         batch_size=experiment_config.batch_size,
         shuffle=False,
     )
 
     history_rows: list[dict[str, float | int]] = []
     checkpoint_path = experiment_dir / "checkpoint_best.pt"
-    best_val_loss = float("inf")
+    best_full_loss = float("inf")
     best_epoch = 0
     epochs_without_improvement = 0
 
@@ -104,9 +99,9 @@ def run_training_experiment(
             device=device,
             train=True,
         )
-        val_metrics = _run_epoch(
+        full_metrics = _run_epoch(
             model=model,
-            dataloader=val_loader,
+            dataloader=full_loader,
             criterion=criterion,
             optimizer=None,
             device=device,
@@ -116,14 +111,14 @@ def run_training_experiment(
             {
                 "epoch": epoch,
                 "train_loss": train_metrics.loss,
-                "val_loss": val_metrics.loss,
+                "full_loss": full_metrics.loss,
                 "train_accuracy": train_metrics.accuracy,
-                "val_accuracy": val_metrics.accuracy,
+                "full_accuracy": full_metrics.accuracy,
             }
         )
 
-        if val_metrics.loss < best_val_loss:
-            best_val_loss = val_metrics.loss
+        if full_metrics.loss < best_full_loss:
+            best_full_loss = full_metrics.loss
             best_epoch = epoch
             epochs_without_improvement = 0
             save_checkpoint(
@@ -133,12 +128,12 @@ def run_training_experiment(
                 dataset_name=experiment_config.dataset_name,
                 experiment_config=experiment_config.to_dict(),
                 best_epoch=best_epoch,
-                best_val_loss=best_val_loss,
+                best_full_loss=best_full_loss,
                 metrics={
                     "train_loss": train_metrics.loss,
-                    "val_loss": val_metrics.loss,
+                    "full_loss": full_metrics.loss,
                     "train_accuracy": train_metrics.accuracy,
-                    "val_accuracy": val_metrics.accuracy,
+                    "full_accuracy": full_metrics.accuracy,
                 },
                 seed=experiment_config.seed,
             )
@@ -151,9 +146,9 @@ def run_training_experiment(
     best_model, checkpoint = load_model_from_checkpoint(
         checkpoint_path, map_location=device
     )
-    test_metrics = _run_epoch(
+    full_metrics = _run_epoch(
         model=best_model,
-        dataloader=test_loader,
+        dataloader=full_loader,
         criterion=criterion,
         optimizer=None,
         device=device,
@@ -163,8 +158,8 @@ def run_training_experiment(
     _write_history(path=experiment_dir / "history.csv", history_rows=history_rows)
     _write_confusion_matrix(
         path=experiment_dir / "confusion_matrix.csv",
-        labels=test_metrics.labels,
-        predictions=test_metrics.predictions,
+        labels=full_metrics.labels,
+        predictions=full_metrics.predictions,
         num_classes=dataset_bundle.num_classes,
     )
     _write_metrics(
@@ -178,9 +173,9 @@ def run_training_experiment(
             "bond_dim": experiment_config.bond_dim,
             "device": str(device),
             "best_epoch": checkpoint["best_epoch"],
-            "best_val_loss": checkpoint["best_val_loss"],
-            "test_loss": test_metrics.loss,
-            "test_accuracy": test_metrics.accuracy,
+            "best_full_loss": checkpoint["best_full_loss"],
+            "full_loss": full_metrics.loss,
+            "full_accuracy": full_metrics.accuracy,
         },
     )
     return checkpoint_path
@@ -251,7 +246,13 @@ def _write_history(
     path: Path,
     history_rows: list[dict[str, float | int]],
 ) -> None:
-    fieldnames = ["epoch", "train_loss", "val_loss", "train_accuracy", "val_accuracy"]
+    fieldnames = [
+        "epoch",
+        "train_loss",
+        "full_loss",
+        "train_accuracy",
+        "full_accuracy",
+    ]
     with path.open("w", encoding="utf-8", newline="") as file_handle:
         writer = csv.DictWriter(file_handle, fieldnames=fieldnames)
         writer.writeheader()

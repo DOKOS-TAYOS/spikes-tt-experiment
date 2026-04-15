@@ -80,19 +80,23 @@ class ManualMPSNetwork(tk.TensorNetwork):
         if len(self.site_nodes) == 1:
             result = self.site_nodes[0] @ data_nodes[0]
         else:
-            stacked_site_nodes = tk.stack(self.site_nodes[:-1])
-            stacked_data_nodes = tk.stack(data_nodes[:-1])
-            stacked_site_nodes ^ stacked_data_nodes
-            contracted_bulk_nodes = tk.unbind(stacked_site_nodes @ stacked_data_nodes)
+            result = self.site_nodes[0] @ data_nodes[0]
 
-            result = contracted_bulk_nodes[0]
-            for node in contracted_bulk_nodes[1:]:
-                result @= node
+            if len(self.site_nodes) > 2:
+                stacked_site_nodes = tk.stack(self.site_nodes[1:-1])
+                stacked_data_nodes = tk.stack(data_nodes[1:-1])
+                stacked_site_nodes ^ stacked_data_nodes
+                contracted_bulk_nodes = tk.unbind(
+                    stacked_site_nodes @ stacked_data_nodes
+                )
+
+                for node in contracted_bulk_nodes:
+                    result @= node
 
             last_result = self.site_nodes[-1] @ data_nodes[-1]
             result @= last_result
 
-        return tk.permute(result, ("batch", "left", "output"))
+        return tk.permute(result, ("batch", "output"))
 
     def _build_site_nodes(
         self,
@@ -128,16 +132,16 @@ class ManualMPSNetwork(tk.TensorNetwork):
         self,
         *,
         index: int,
-    ) -> tuple[tuple[int, int, int], tuple[str, str, str]]:
+    ) -> tuple[tuple[int, ...], tuple[str, ...]]:
         if self.config.sequence_length == 1:
             return (
-                (1, self.config.input_dim, self.config.num_classes),
-                ("left", "input", "output"),
+                (self.config.input_dim, self.config.num_classes),
+                ("input", "output"),
             )
         if index == 0:
             return (
-                (1, self.config.input_dim, self.config.bond_dim),
-                ("left", "input", "right"),
+                (self.config.input_dim, self.config.bond_dim),
+                ("input", "right"),
             )
         if index == self.config.sequence_length - 1:
             return (
@@ -152,7 +156,7 @@ class ManualMPSNetwork(tk.TensorNetwork):
 
 def _initialize_site_tensor(
     *,
-    shape: tuple[int, int, int],
+    shape: tuple[int, ...],
     device: torch.device | None,
     dtype: torch.dtype | None,
 ) -> torch.Tensor:

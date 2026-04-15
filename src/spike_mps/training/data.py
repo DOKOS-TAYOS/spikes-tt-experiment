@@ -52,6 +52,7 @@ class DatasetBundle:
     task: TaskName
     sequence_length: int
     num_classes: int
+    full_dataset: SpikeTrainTensorDataset
     train_dataset: SpikeTrainTensorDataset
     val_dataset: SpikeTrainTensorDataset
     test_dataset: SpikeTrainTensorDataset
@@ -65,15 +66,17 @@ def load_dataset_bundle(dataset_dir: Path) -> DatasetBundle:
     if not isinstance(metadata, dict):
         raise ValueError("metadata.yaml must contain a YAML mapping.")
 
-    full_distribution = metadata["label_distribution"]["full"]
-    labels = [int(label) for label in full_distribution.keys()]
-    num_classes = max(labels) + 1
+    sequence_length = int(metadata["sequence_length"])
+    num_classes = sequence_length + 1
 
     return DatasetBundle(
         dataset_name=str(metadata["name"]),
         task=str(metadata["task"]),
-        sequence_length=int(metadata["sequence_length"]),
+        sequence_length=sequence_length,
         num_classes=num_classes,
+        full_dataset=SpikeTrainTensorDataset(
+            _load_split_records(dataset_dir / "full.csv")
+        ),
         train_dataset=SpikeTrainTensorDataset(
             _load_split_records(dataset_dir / "train.csv")
         ),

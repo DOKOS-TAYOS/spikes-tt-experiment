@@ -43,7 +43,7 @@ def test_load_dataset_bundle_infers_num_classes_from_metadata(
     dataset_dir = _create_dataset_directory(
         workspace_dir=workspace_dir,
         name="bundle_example",
-        task="count_ones",
+        task="adjacent_ones_score",
         sequence_length=4,
         dataset_size=16,
     )
@@ -53,7 +53,8 @@ def test_load_dataset_bundle_infers_num_classes_from_metadata(
     assert bundle.dataset_name == "bundle_example"
     assert bundle.sequence_length == 4
     assert bundle.num_classes == 5
-    assert bundle.task == "count_ones"
+    assert bundle.task == "adjacent_ones_score"
+    assert len(bundle.full_dataset) == 16
 
 
 def test_mps_classifier_returns_scores_for_each_class() -> None:
@@ -62,7 +63,7 @@ def test_mps_classifier_returns_scores_for_each_class() -> None:
             sequence_length=5,
             input_dim=2,
             num_classes=6,
-            bond_dim=4,
+            bond_dim=6,
             task="count_ones",
         )
     )
@@ -81,7 +82,7 @@ def test_mps_classifier_builds_one_site_tensor_per_spike_position() -> None:
             sequence_length=5,
             input_dim=2,
             num_classes=6,
-            bond_dim=4,
+            bond_dim=6,
             task="count_ones",
         )
     )
@@ -89,12 +90,31 @@ def test_mps_classifier_builds_one_site_tensor_per_spike_position() -> None:
     site_nodes = model.network.site_nodes
 
     assert len(site_nodes) == 5
-    assert tuple(site_nodes[0].shape) == (1, 2, 4)
-    assert tuple(site_nodes[1].shape) == (4, 2, 4)
-    assert tuple(site_nodes[-1].shape) == (4, 2, 6)
-    assert site_nodes[0].axes_names == ["left", "input", "right"]
+    assert tuple(site_nodes[0].shape) == (2, 6)
+    assert tuple(site_nodes[1].shape) == (6, 2, 6)
+    assert tuple(site_nodes[-1].shape) == (6, 2, 6)
+    assert site_nodes[0].axes_names == ["input", "right"]
     assert site_nodes[-1].axes_names == ["left", "input", "output"]
     assert site_nodes[-1]["output"].size() == 6
+
+
+def test_single_site_mps_uses_only_input_and_output_axes() -> None:
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=1,
+            input_dim=2,
+            num_classes=2,
+            bond_dim=2,
+            task="count_ones",
+        )
+    )
+    batch = torch.stack([encode_spike_train("0")], dim=0)
+
+    scores = model(batch)
+
+    assert tuple(model.network.site_nodes[0].shape) == (2, 2)
+    assert model.network.site_nodes[0].axes_names == ["input", "output"]
+    assert scores.shape == (1, 2)
 
 
 def test_select_predicted_class_uses_largest_absolute_score() -> None:
@@ -120,7 +140,7 @@ def test_checkpoint_roundtrip_reconstructs_model_with_same_predictions(
             sequence_length=5,
             input_dim=2,
             num_classes=6,
-            bond_dim=4,
+            bond_dim=6,
             task="count_ones",
         )
     )
@@ -135,10 +155,10 @@ def test_checkpoint_roundtrip_reconstructs_model_with_same_predictions(
         model=model,
         experiment_name="roundtrip",
         dataset_name="bundle_example",
-        experiment_config={"epochs": 2, "bond_dim": 4},
+        experiment_config={"epochs": 2, "bond_dim": 6},
         best_epoch=1,
-        best_val_loss=0.5,
-        metrics={"val_accuracy": 0.8},
+        best_full_loss=0.5,
+        metrics={"full_accuracy": 0.8},
         seed=123,
     )
 
