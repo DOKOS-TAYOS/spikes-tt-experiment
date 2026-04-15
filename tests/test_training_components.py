@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import torch
+from torch import nn
 
 from spike_mps.config import DatasetConfig, SplitRatios
 from spike_mps.generation import build_dataset_artifacts
@@ -16,6 +18,10 @@ from spike_mps.training.checkpoints import (
     save_checkpoint,
 )
 from spike_mps.training.data import encode_spike_train, load_dataset_bundle
+from spike_mps.training.runner import (
+    _compute_loss_components,
+    _compute_output_metrics,
+)
 from spike_mps.writer import write_dataset_artifacts
 
 
@@ -129,6 +135,56 @@ def test_select_predicted_class_uses_largest_absolute_score() -> None:
     predicted = select_predicted_class(scores)
 
     assert torch.equal(predicted, torch.tensor([2, 1], dtype=torch.long))
+
+
+def test_compute_loss_components_combines_cross_entropy_and_one_hot_penalty() -> None:
+    scores = torch.tensor(
+        [
+            [0.1, 0.9, 0.2],
+            [0.2, 0.3, 0.8],
+        ],
+        dtype=torch.float32,
+    )
+    labels = torch.tensor([1, 2], dtype=torch.long)
+
+    total_loss, cross_entropy_loss, one_hot_penalty = _compute_loss_components(
+        scores=scores,
+        labels=labels,
+        num_classes=3,
+        one_hot_penalty_weight=0.25,
+    )
+
+    abs_scores = scores.abs()
+    expected_cross_entropy = nn.CrossEntropyLoss()(abs_scores, labels)
+    expected_penalty = torch.mean(
+        (
+            abs_scores
+            - torch.nn.functional.one_hot(labels, num_classes=3).to(torch.float32)
+        )
+        ** 2
+    )
+
+    assert torch.isclose(cross_entropy_loss, expected_cross_entropy)
+    assert torch.isclose(one_hot_penalty, expected_penalty)
+    assert torch.isclose(total_loss, expected_cross_entropy + 0.25 * expected_penalty)
+
+
+def test_compute_output_metrics_summarizes_target_and_off_target_components() -> None:
+    scores = torch.tensor(
+        [
+            [0.1, 0.9, 0.2],
+            [0.2, 0.3, 0.8],
+        ],
+        dtype=torch.float32,
+    )
+    labels = torch.tensor([1, 2], dtype=torch.long)
+
+    metrics = _compute_output_metrics(scores=scores, labels=labels)
+
+    assert metrics["target_component_mean"] == pytest.approx(0.85)
+    assert metrics["off_target_component_mean"] == pytest.approx(0.2)
+    assert metrics["best_incorrect_component_mean"] == pytest.approx(0.25)
+    assert metrics["target_margin_mean"] == pytest.approx(0.6)
 
 
 def test_checkpoint_roundtrip_reconstructs_model_with_same_predictions(

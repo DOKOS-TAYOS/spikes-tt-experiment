@@ -4,6 +4,7 @@ defaults:
   learning_rate: 0.001
   weight_decay: 0.0
   bond_dim: 6
+  one_hot_penalty_weight: 0.25
   patience: 15
   device: auto
   seed: 42

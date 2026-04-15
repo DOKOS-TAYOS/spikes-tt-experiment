@@ -8,6 +8,7 @@ from typing import Any
 import torch
 import yaml
 from torch import nn
+from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 from spike_mps.models.mps_classifier import (
@@ -20,15 +21,21 @@ from spike_mps.training.config import (
     get_experiment_config,
     load_training_config,
 )
-from spike_mps.training.data import (
-    load_dataset_bundle,
-)
+from spike_mps.training.data import load_dataset_bundle
 
 
 @dataclass(frozen=True)
 class EpochMetrics:
     loss: float
+    cross_entropy_loss: float
+    one_hot_penalty: float
     accuracy: float
+    target_component_mean: float
+    off_target_component_mean: float
+    best_incorrect_component_mean: float
+    target_margin_mean: float
+    correct_predictions: int
+    total_examples: int
     predictions: list[int]
     labels: list[int]
 
@@ -98,6 +105,8 @@ def run_training_experiment(
             optimizer=optimizer,
             device=device,
             train=True,
+            num_classes=dataset_bundle.num_classes,
+            one_hot_penalty_weight=experiment_config.one_hot_penalty_weight,
         )
         full_metrics = _run_epoch(
             model=model,
@@ -106,15 +115,43 @@ def run_training_experiment(
             optimizer=None,
             device=device,
             train=False,
+            num_classes=dataset_bundle.num_classes,
+            one_hot_penalty_weight=experiment_config.one_hot_penalty_weight,
         )
         history_rows.append(
             {
                 "epoch": epoch,
                 "train_loss": train_metrics.loss,
+                "train_cross_entropy_loss": train_metrics.cross_entropy_loss,
+                "train_one_hot_penalty": train_metrics.one_hot_penalty,
                 "full_loss": full_metrics.loss,
                 "train_accuracy": train_metrics.accuracy,
+                "train_target_component_mean": train_metrics.target_component_mean,
+                "train_off_target_component_mean": (
+                    train_metrics.off_target_component_mean
+                ),
+                "train_best_incorrect_component_mean": (
+                    train_metrics.best_incorrect_component_mean
+                ),
+                "train_target_margin_mean": train_metrics.target_margin_mean,
+                "full_cross_entropy_loss": full_metrics.cross_entropy_loss,
+                "full_one_hot_penalty": full_metrics.one_hot_penalty,
                 "full_accuracy": full_metrics.accuracy,
+                "full_target_component_mean": full_metrics.target_component_mean,
+                "full_off_target_component_mean": (
+                    full_metrics.off_target_component_mean
+                ),
+                "full_best_incorrect_component_mean": (
+                    full_metrics.best_incorrect_component_mean
+                ),
+                "full_target_margin_mean": full_metrics.target_margin_mean,
             }
+        )
+        _log_epoch(
+            epoch=epoch,
+            total_epochs=experiment_config.epochs,
+            train_metrics=train_metrics,
+            full_metrics=full_metrics,
         )
 
         if full_metrics.loss < best_full_loss:
@@ -131,9 +168,31 @@ def run_training_experiment(
                 best_full_loss=best_full_loss,
                 metrics={
                     "train_loss": train_metrics.loss,
+                    "train_cross_entropy_loss": train_metrics.cross_entropy_loss,
+                    "train_one_hot_penalty": train_metrics.one_hot_penalty,
                     "full_loss": full_metrics.loss,
+                    "full_cross_entropy_loss": full_metrics.cross_entropy_loss,
+                    "full_one_hot_penalty": full_metrics.one_hot_penalty,
                     "train_accuracy": train_metrics.accuracy,
+                    "train_target_component_mean": (
+                        train_metrics.target_component_mean
+                    ),
+                    "train_off_target_component_mean": (
+                        train_metrics.off_target_component_mean
+                    ),
+                    "train_best_incorrect_component_mean": (
+                        train_metrics.best_incorrect_component_mean
+                    ),
+                    "train_target_margin_mean": train_metrics.target_margin_mean,
                     "full_accuracy": full_metrics.accuracy,
+                    "full_target_component_mean": full_metrics.target_component_mean,
+                    "full_off_target_component_mean": (
+                        full_metrics.off_target_component_mean
+                    ),
+                    "full_best_incorrect_component_mean": (
+                        full_metrics.best_incorrect_component_mean
+                    ),
+                    "full_target_margin_mean": full_metrics.target_margin_mean,
                 },
                 seed=experiment_config.seed,
             )
@@ -153,7 +212,10 @@ def run_training_experiment(
         optimizer=None,
         device=device,
         train=False,
+        num_classes=dataset_bundle.num_classes,
+        one_hot_penalty_weight=experiment_config.one_hot_penalty_weight,
     )
+    _log_final_summary(full_metrics=full_metrics)
 
     _write_history(path=experiment_dir / "history.csv", history_rows=history_rows)
     _write_confusion_matrix(
@@ -171,11 +233,22 @@ def run_training_experiment(
             "sequence_length": dataset_bundle.sequence_length,
             "num_classes": dataset_bundle.num_classes,
             "bond_dim": experiment_config.bond_dim,
+            "one_hot_penalty_weight": experiment_config.one_hot_penalty_weight,
             "device": str(device),
             "best_epoch": checkpoint["best_epoch"],
             "best_full_loss": checkpoint["best_full_loss"],
             "full_loss": full_metrics.loss,
+            "full_cross_entropy_loss": full_metrics.cross_entropy_loss,
+            "full_one_hot_penalty": full_metrics.one_hot_penalty,
             "full_accuracy": full_metrics.accuracy,
+            "full_target_component_mean": full_metrics.target_component_mean,
+            "full_off_target_component_mean": (full_metrics.off_target_component_mean),
+            "full_best_incorrect_component_mean": (
+                full_metrics.best_incorrect_component_mean
+            ),
+            "full_target_margin_mean": full_metrics.target_margin_mean,
+            "full_correct_predictions": full_metrics.correct_predictions,
+            "full_total_examples": full_metrics.total_examples,
         },
     )
     return checkpoint_path
@@ -189,6 +262,8 @@ def _run_epoch(
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
     train: bool,
+    num_classes: int,
+    one_hot_penalty_weight: float,
 ) -> EpochMetrics:
     if train:
         model.train()
@@ -196,8 +271,14 @@ def _run_epoch(
         model.eval()
 
     total_loss = 0.0
+    total_cross_entropy_loss = 0.0
+    total_one_hot_penalty = 0.0
     total_examples = 0
     correct_predictions = 0
+    total_target_component = 0.0
+    total_off_target_component = 0.0
+    total_best_incorrect_component = 0.0
+    total_target_margin = 0.0
     all_predictions: list[int] = []
     all_labels: list[int] = []
 
@@ -210,27 +291,138 @@ def _run_epoch(
 
         with torch.set_grad_enabled(train):
             scores = model(inputs)
-            loss = criterion(scores.abs(), labels)
+            loss, cross_entropy_loss, one_hot_penalty = _compute_loss_components(
+                scores=scores,
+                labels=labels,
+                num_classes=num_classes,
+                one_hot_penalty_weight=one_hot_penalty_weight,
+                criterion=criterion,
+            )
             if train and optimizer is not None:
                 loss.backward()
                 optimizer.step()
 
         batch_size = labels.shape[0]
         predictions = select_predicted_class(scores)
+        output_metrics = _compute_output_metrics(scores=scores, labels=labels)
         total_loss += loss.item() * batch_size
+        total_cross_entropy_loss += cross_entropy_loss.item() * batch_size
+        total_one_hot_penalty += one_hot_penalty.item() * batch_size
         total_examples += batch_size
         correct_predictions += int((predictions == labels).sum().item())
+        total_target_component += output_metrics["target_component_mean"] * batch_size
+        total_off_target_component += (
+            output_metrics["off_target_component_mean"] * batch_size
+        )
+        total_best_incorrect_component += (
+            output_metrics["best_incorrect_component_mean"] * batch_size
+        )
+        total_target_margin += output_metrics["target_margin_mean"] * batch_size
         all_predictions.extend(predictions.detach().cpu().tolist())
         all_labels.extend(labels.detach().cpu().tolist())
 
     average_loss = total_loss / max(total_examples, 1)
+    average_cross_entropy_loss = total_cross_entropy_loss / max(total_examples, 1)
+    average_one_hot_penalty = total_one_hot_penalty / max(total_examples, 1)
     accuracy = correct_predictions / max(total_examples, 1)
     return EpochMetrics(
         loss=average_loss,
+        cross_entropy_loss=average_cross_entropy_loss,
+        one_hot_penalty=average_one_hot_penalty,
         accuracy=accuracy,
+        target_component_mean=total_target_component / max(total_examples, 1),
+        off_target_component_mean=total_off_target_component / max(total_examples, 1),
+        best_incorrect_component_mean=(
+            total_best_incorrect_component / max(total_examples, 1)
+        ),
+        target_margin_mean=total_target_margin / max(total_examples, 1),
+        correct_predictions=correct_predictions,
+        total_examples=total_examples,
         predictions=all_predictions,
         labels=all_labels,
     )
+
+
+def _compute_loss_components(
+    *,
+    scores: torch.Tensor,
+    labels: torch.Tensor,
+    num_classes: int,
+    one_hot_penalty_weight: float,
+    criterion: nn.Module | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    abs_scores = scores.abs()
+    resolved_criterion = criterion if criterion is not None else nn.CrossEntropyLoss()
+    cross_entropy_loss = resolved_criterion(abs_scores, labels)
+    one_hot_targets = F.one_hot(labels, num_classes=num_classes).to(torch.float32)
+    one_hot_penalty = F.mse_loss(abs_scores, one_hot_targets)
+    total_loss = cross_entropy_loss + one_hot_penalty_weight * one_hot_penalty
+    return total_loss, cross_entropy_loss, one_hot_penalty
+
+
+def _compute_output_metrics(
+    *,
+    scores: torch.Tensor,
+    labels: torch.Tensor,
+) -> dict[str, float]:
+    abs_scores = scores.abs()
+    target_mask = F.one_hot(labels, num_classes=abs_scores.shape[1]).to(torch.bool)
+    target_components = abs_scores.masked_select(target_mask)
+    off_target_components = abs_scores.masked_select(~target_mask)
+    incorrect_scores = abs_scores.masked_fill(target_mask, float("-inf"))
+    best_incorrect_components = incorrect_scores.max(dim=1).values
+    target_margins = target_components - best_incorrect_components
+    return {
+        "target_component_mean": float(target_components.mean().item()),
+        "off_target_component_mean": float(off_target_components.mean().item()),
+        "best_incorrect_component_mean": float(best_incorrect_components.mean().item()),
+        "target_margin_mean": float(target_margins.mean().item()),
+    }
+
+
+def _log_epoch(
+    *,
+    epoch: int,
+    total_epochs: int,
+    train_metrics: EpochMetrics,
+    full_metrics: EpochMetrics,
+) -> None:
+    print(
+        f"Epoch {epoch}/{total_epochs} | "
+        f"train loss={train_metrics.loss:.4f} "
+        f"ce={train_metrics.cross_entropy_loss:.4f} "
+        f"one_hot={train_metrics.one_hot_penalty:.4f} "
+        f"acc={train_metrics.accuracy:.4f} "
+        f"target={train_metrics.target_component_mean:.4f} "
+        f"off={train_metrics.off_target_component_mean:.4f} "
+        f"margin={train_metrics.target_margin_mean:.4f} | "
+        f"full loss={full_metrics.loss:.4f} "
+        f"ce={full_metrics.cross_entropy_loss:.4f} "
+        f"one_hot={full_metrics.one_hot_penalty:.4f} "
+        f"acc={full_metrics.accuracy:.4f} "
+        f"target={full_metrics.target_component_mean:.4f} "
+        f"off={full_metrics.off_target_component_mean:.4f} "
+        f"margin={full_metrics.target_margin_mean:.4f}"
+    )
+
+
+def _log_final_summary(*, full_metrics: EpochMetrics) -> None:
+    print("Final full metrics:")
+    print(
+        "  accuracy: "
+        f"{full_metrics.accuracy:.4f} "
+        f"({full_metrics.correct_predictions}/{full_metrics.total_examples})"
+    )
+    print(f"  total_loss: {full_metrics.loss:.4f}")
+    print(f"  cross_entropy_loss: {full_metrics.cross_entropy_loss:.4f}")
+    print(f"  one_hot_penalty: {full_metrics.one_hot_penalty:.4f}")
+    print(f"  target_component_mean: {full_metrics.target_component_mean:.4f}")
+    print(f"  off_target_component_mean: {full_metrics.off_target_component_mean:.4f}")
+    print(
+        "  best_incorrect_component_mean: "
+        f"{full_metrics.best_incorrect_component_mean:.4f}"
+    )
+    print(f"  target_margin_mean: {full_metrics.target_margin_mean:.4f}")
 
 
 def _resolve_device(device_name: str) -> torch.device:
@@ -249,9 +441,21 @@ def _write_history(
     fieldnames = [
         "epoch",
         "train_loss",
+        "train_cross_entropy_loss",
+        "train_one_hot_penalty",
         "full_loss",
         "train_accuracy",
+        "train_target_component_mean",
+        "train_off_target_component_mean",
+        "train_best_incorrect_component_mean",
+        "train_target_margin_mean",
+        "full_cross_entropy_loss",
+        "full_one_hot_penalty",
         "full_accuracy",
+        "full_target_component_mean",
+        "full_off_target_component_mean",
+        "full_best_incorrect_component_mean",
+        "full_target_margin_mean",
     ]
     with path.open("w", encoding="utf-8", newline="") as file_handle:
         writer = csv.DictWriter(file_handle, fieldnames=fieldnames)

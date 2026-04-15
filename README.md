@@ -85,6 +85,7 @@ For the current length-5 experiments, set:
 
 - `bond_dim = sequence_length + 1 = 6`
 - `num_classes = sequence_length + 1 = 6`
+- `one_hot_penalty_weight = 0.25`
 
 Train `count_ones`:
 
@@ -106,7 +107,9 @@ python scripts/train_mps.py --config configTraining.yaml --experiment mps_length
 
 Training uses `full.csv` both for optimization and for the checkpoint selection criterion, because the purpose of this experiment is to study the fully memorized limit rather than generalization.
 
-The classifier is implemented as a manual `tensorkrowch` tensor network with one site tensor per spike-train position. The first tensor carries only `input` and `right`, the intermediate tensors carry `left`, `input`, and `right`, and only the last tensor carries the class `output` index. After contracting the network with an encoded spike train, the model returns one score per category. Training uses `abs(score)` inside the cross-entropy loss, and prediction chooses the category with the largest absolute score.
+The classifier is implemented as a manual `tensorkrowch` tensor network with one site tensor per spike-train position. The first tensor carries only `input` and `right`, the intermediate tensors carry `left`, `input`, and `right`, and only the last tensor carries the class `output` index. After contracting the network with an encoded spike train, the model returns one score per category. Training uses `abs(score)` inside a composite objective: cross-entropy on the correct class plus an MSE penalty that pushes the full output vector toward a one-hot target. Prediction still chooses the category with the largest absolute score.
+
+During training, the console now prints one compact line per epoch with the loss split, accuracy, target activation, off-target activation, and target margin. At the end it also prints a final summary over the full dataset. The same metrics are written to `history.csv` and `metrics.yaml`.
 
 ## Interactive Visualization
 
