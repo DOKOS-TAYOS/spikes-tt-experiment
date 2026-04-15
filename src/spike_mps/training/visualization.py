@@ -3,7 +3,6 @@ from __future__ import annotations
 import warnings
 from pathlib import Path
 
-import matplotlib
 from tensor_network_viz import show_tensor_network
 
 from spike_mps.training.checkpoints import load_model_from_checkpoint
@@ -14,15 +13,16 @@ def visualize_checkpoint(
     checkpoint_path: Path,
     show: bool = True,
 ) -> tuple[object, object]:
-    if show:
-        backend = matplotlib.get_backend().lower()
-        if "agg" in backend:
-            raise RuntimeError(
-                "Interactive visualization requires a GUI backend. "
-                "Run in a GUI environment or pass --no-show."
-            )
+    # if show:
+    #     backend = matplotlib.get_backend().lower()
+    #     if "agg" in backend:
+    #         raise RuntimeError(
+    #             "Interactive visualization requires a GUI backend. "
+    #             "Run in a GUI environment or pass --no-show."
+    #         )
 
-    model, checkpoint = load_model_from_checkpoint(checkpoint_path)
+    model, _checkpoint = load_model_from_checkpoint(checkpoint_path)
+    model.network.reset()
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",

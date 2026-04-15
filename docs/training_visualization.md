@@ -37,7 +37,9 @@ Train one experiment:
 python scripts/train_mps.py --config configTraining.yaml --experiment mps_length5_count_ones
 ```
 
-The trainer loads the corresponding dataset from `datasets/generated/<dataset_name>/`, applies the fixed local feature map `0 -> [1, 0]`, `1 -> [0, 1]`, and trains an MPS classifier for multiclass classification.
+The trainer loads the corresponding dataset from `datasets/generated/<dataset_name>/`, applies the fixed local feature map `0 -> [1, 0]`, `1 -> [0, 1]`, and trains a manual `tensorkrowch` MPS classifier for multiclass classification.
+
+The model has one site tensor per sequence position. Each site tensor carries one `input` index, and the last tensor also carries the `output` index whose dimension matches the number of classes. Contracting the network with one encoded spike train produces a score vector. Training uses `abs(score)` inside the loss, and the predicted class is the index with the largest absolute score.
 
 ## Saved artifacts
 
@@ -68,4 +70,4 @@ For automated checks or headless environments:
 python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt --no-show
 ```
 
-The project does not implement a separate tensor inspector. It reconstructs the trained `tensorkrowch` model and delegates visualization to `show_tensor_network` from `tensor-network-visualization`.
+The project does not implement a separate tensor inspector. It reconstructs the trained `tensorkrowch` model, resets any traced contraction byproducts, and delegates visualization to `show_tensor_network` from `tensor-network-visualization`.

@@ -10,7 +10,11 @@ import yaml
 from torch import nn
 from torch.utils.data import DataLoader
 
-from spike_mps.models.mps_classifier import MPSClassifier, MPSModelConfig
+from spike_mps.models.mps_classifier import (
+    MPSClassifier,
+    MPSModelConfig,
+    select_predicted_class,
+)
 from spike_mps.training.checkpoints import load_model_from_checkpoint, save_checkpoint
 from spike_mps.training.config import (
     get_experiment_config,
@@ -210,14 +214,14 @@ def _run_epoch(
             optimizer.zero_grad()
 
         with torch.set_grad_enabled(train):
-            logits = model(inputs)
-            loss = criterion(logits, labels)
+            scores = model(inputs)
+            loss = criterion(scores.abs(), labels)
             if train and optimizer is not None:
                 loss.backward()
                 optimizer.step()
 
         batch_size = labels.shape[0]
-        predictions = torch.argmax(logits, dim=1)
+        predictions = select_predicted_class(scores)
         total_loss += loss.item() * batch_size
         total_examples += batch_size
         correct_predictions += int((predictions == labels).sum().item())

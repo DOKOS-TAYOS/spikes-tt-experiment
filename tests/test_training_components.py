@@ -6,7 +6,11 @@ import torch
 
 from spike_mps.config import DatasetConfig, SplitRatios
 from spike_mps.generation import build_dataset_artifacts
-from spike_mps.models.mps_classifier import MPSClassifier, MPSModelConfig
+from spike_mps.models.mps_classifier import (
+    MPSClassifier,
+    MPSModelConfig,
+    select_predicted_class,
+)
 from spike_mps.training.checkpoints import (
     load_model_from_checkpoint,
     save_checkpoint,
@@ -52,7 +56,7 @@ def test_load_dataset_bundle_infers_num_classes_from_metadata(
     assert bundle.task == "count_ones"
 
 
-def test_mps_classifier_returns_logits_for_each_class() -> None:
+def test_mps_classifier_returns_scores_for_each_class() -> None:
     model = MPSClassifier(
         config=MPSModelConfig(
             sequence_length=5,
@@ -66,9 +70,45 @@ def test_mps_classifier_returns_logits_for_each_class() -> None:
         [encode_spike_train("01010"), encode_spike_train("11100")], dim=0
     )
 
-    logits = model(batch)
+    scores = model(batch)
 
-    assert logits.shape == (2, 6)
+    assert scores.shape == (2, 6)
+
+
+def test_mps_classifier_builds_one_site_tensor_per_spike_position() -> None:
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=5,
+            input_dim=2,
+            num_classes=6,
+            bond_dim=4,
+            task="count_ones",
+        )
+    )
+
+    site_nodes = model.network.site_nodes
+
+    assert len(site_nodes) == 5
+    assert tuple(site_nodes[0].shape) == (1, 2, 4)
+    assert tuple(site_nodes[1].shape) == (4, 2, 4)
+    assert tuple(site_nodes[-1].shape) == (4, 2, 6)
+    assert site_nodes[0].axes_names == ["left", "input", "right"]
+    assert site_nodes[-1].axes_names == ["left", "input", "output"]
+    assert site_nodes[-1]["output"].size() == 6
+
+
+def test_select_predicted_class_uses_largest_absolute_score() -> None:
+    scores = torch.tensor(
+        [
+            [-0.1, 0.2, -0.9],
+            [0.5, -0.7, 0.6],
+        ],
+        dtype=torch.float32,
+    )
+
+    predicted = select_predicted_class(scores)
+
+    assert torch.equal(predicted, torch.tensor([2, 1], dtype=torch.long))
 
 
 def test_checkpoint_roundtrip_reconstructs_model_with_same_predictions(
@@ -87,7 +127,7 @@ def test_checkpoint_roundtrip_reconstructs_model_with_same_predictions(
     batch = torch.stack(
         [encode_spike_train("01010"), encode_spike_train("11100")], dim=0
     )
-    expected_logits = model(batch).detach()
+    expected_scores = model(batch).detach()
 
     checkpoint_path = workspace_dir / "checkpoint_best.pt"
     save_checkpoint(
@@ -103,10 +143,10 @@ def test_checkpoint_roundtrip_reconstructs_model_with_same_predictions(
     )
 
     loaded_model, checkpoint = load_model_from_checkpoint(checkpoint_path)
-    actual_logits = loaded_model(batch).detach()
+    actual_scores = loaded_model(batch).detach()
 
     assert checkpoint["experiment_name"] == "roundtrip"
-    assert torch.allclose(expected_logits, actual_logits)
+    assert torch.allclose(expected_scores, actual_scores)
 
 
 def _create_dataset_directory(
