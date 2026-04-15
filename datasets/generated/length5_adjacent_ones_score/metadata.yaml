@@ -1,18 +1,18 @@
 name: length5_adjacent_ones_score
 task: adjacent_ones_score
-sequence_length: 5
-requested_size: 32
-generated_size: 32
-unique_space_size: 32
+sequence_length: 2
+requested_size: 4
+generated_size: 4
+unique_space_size: 4
 seed: 103
 split_ratios:
   train: 0.7
   val: 0.15
   test: 0.15
 split_counts:
-  train: 22
-  val: 4
-  test: 6
+  train: 2
+  val: 0
+  test: 2
 label_noise_pct: 0.0
 noise_scope: train
 noise_summary:
@@ -21,41 +21,21 @@ noise_summary:
   test: 0
 label_distribution:
   full:
-    0: 13
-    1: 10
-    2: 6
-    3: 2
-    4: 1
+    0: 3
+    1: 1
   train:
-    0: 10
-    1: 6
-    2: 3
-    3: 2
-    4: 1
-  val:
     0: 2
-    1: 2
+  val: {}
   test:
     0: 1
-    1: 2
-    2: 3
+    1: 1
 clean_label_distribution:
   full:
-    0: 13
-    1: 10
-    2: 6
-    3: 2
-    4: 1
+    0: 3
+    1: 1
   train:
-    0: 10
-    1: 6
-    2: 3
-    3: 2
-    4: 1
-  val:
     0: 2
-    1: 2
+  val: {}
   test:
     0: 1
-    1: 2
-    2: 3
+    1: 1

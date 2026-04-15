@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -57,22 +56,7 @@ def load_model_from_checkpoint(
     model = MPSClassifier(config=model_config)
     state_dict = checkpoint["state_dict"]
     if any("virtual_result_stack" in key for key in state_dict):
-        example = torch.zeros(
-            (1, model_config.sequence_length, model_config.input_dim),
-            dtype=torch.float32,
-        )
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=r"`tensor` is being cropped to fit the shape of node .*",
-                category=UserWarning,
-            )
-            warnings.filterwarnings(
-                "ignore",
-                message=r"Using a non-tuple sequence for multidimensional indexing.*",
-                category=UserWarning,
-            )
-            model.network.trace(example)
+        model.prepare_for_training()
     model.load_state_dict(state_dict)
     model.to(map_location)
     model.eval()

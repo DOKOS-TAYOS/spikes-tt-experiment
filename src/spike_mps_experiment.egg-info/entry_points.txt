@@ -1,3 +1,0 @@
-[console_scripts]
-spike-mps-clean = spike_mps.tools:main
-spike-mps-generate = spike_mps.cli:main

@@ -72,6 +72,7 @@ def run_training_experiment(
             task=dataset_bundle.task,
         )
     ).to(device)
+    model.prepare_for_training()
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(
@@ -93,6 +94,7 @@ def run_training_experiment(
 
     history_rows: list[dict[str, float | int]] = []
     checkpoint_path = experiment_dir / "checkpoint_best.pt"
+    best_full_accuracy = float("-inf")
     best_full_loss = float("inf")
     best_epoch = 0
     epochs_without_improvement = 0
@@ -154,7 +156,13 @@ def run_training_experiment(
             full_metrics=full_metrics,
         )
 
-        if full_metrics.loss < best_full_loss:
+        if _is_better_full_checkpoint(
+            full_accuracy=full_metrics.accuracy,
+            full_loss=full_metrics.loss,
+            best_full_accuracy=best_full_accuracy,
+            best_full_loss=best_full_loss,
+        ):
+            best_full_accuracy = full_metrics.accuracy
             best_full_loss = full_metrics.loss
             best_epoch = epoch
             epochs_without_improvement = 0
@@ -199,6 +207,10 @@ def run_training_experiment(
         else:
             epochs_without_improvement += 1
 
+        if _reached_perfect_full_accuracy(full_metrics.accuracy):
+            _log_perfect_accuracy_stop(epoch=epoch)
+            break
+
         if epochs_without_improvement >= experiment_config.patience:
             break
 
@@ -236,6 +248,7 @@ def run_training_experiment(
             "one_hot_penalty_weight": experiment_config.one_hot_penalty_weight,
             "device": str(device),
             "best_epoch": checkpoint["best_epoch"],
+            "best_full_accuracy": best_full_accuracy,
             "best_full_loss": checkpoint["best_full_loss"],
             "full_loss": full_metrics.loss,
             "full_cross_entropy_loss": full_metrics.cross_entropy_loss,
@@ -423,6 +436,28 @@ def _log_final_summary(*, full_metrics: EpochMetrics) -> None:
         f"{full_metrics.best_incorrect_component_mean:.4f}"
     )
     print(f"  target_margin_mean: {full_metrics.target_margin_mean:.4f}")
+
+
+def _is_better_full_checkpoint(
+    *,
+    full_accuracy: float,
+    full_loss: float,
+    best_full_accuracy: float,
+    best_full_loss: float,
+) -> bool:
+    if full_accuracy > best_full_accuracy:
+        return True
+    if full_accuracy < best_full_accuracy:
+        return False
+    return full_loss < best_full_loss
+
+
+def _reached_perfect_full_accuracy(full_accuracy: float) -> bool:
+    return full_accuracy >= 1.0
+
+
+def _log_perfect_accuracy_stop(*, epoch: int) -> None:
+    print(f"Reached perfect full accuracy at epoch {epoch}. Stopping early.")
 
 
 def _resolve_device(device_name: str) -> torch.device:

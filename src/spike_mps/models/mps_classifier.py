@@ -181,6 +181,26 @@ class MPSClassifier(nn.Module):
             dtype=dtype,
         )
 
+    def prepare_for_training(self) -> None:
+        reference_parameter = next(self.parameters())
+        example = torch.zeros(
+            (1, self.config.sequence_length, self.config.input_dim),
+            device=reference_parameter.device,
+            dtype=reference_parameter.dtype,
+        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"`tensor` is being cropped to fit the shape of node .*",
+                category=UserWarning,
+            )
+            warnings.filterwarnings(
+                "ignore",
+                message=r"Using a non-tuple sequence for multidimensional indexing.*",
+                category=UserWarning,
+            )
+            self.network.trace(example)
+
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         with warnings.catch_warnings():
             warnings.filterwarnings(

@@ -132,9 +132,9 @@ def _build_experiment_config(
         batch_size=int(
             raw_experiment.get("batch_size", defaults.get("batch_size", 32))
         ),
-        epochs=int(raw_experiment.get("epochs", defaults.get("epochs", 100))),
+        epochs=int(raw_experiment.get("epochs", defaults.get("epochs", 300))),
         learning_rate=float(
-            raw_experiment.get("learning_rate", defaults.get("learning_rate", 1e-3))
+            raw_experiment.get("learning_rate", defaults.get("learning_rate", 1e-2))
         ),
         weight_decay=float(
             raw_experiment.get("weight_decay", defaults.get("weight_decay", 0.0))
@@ -146,7 +146,7 @@ def _build_experiment_config(
                 defaults.get("one_hot_penalty_weight", 0.25),
             )
         ),
-        patience=int(raw_experiment.get("patience", defaults.get("patience", 15))),
+        patience=int(raw_experiment.get("patience", defaults.get("patience", 50))),
         device=str(raw_experiment.get("device", defaults.get("device", "auto"))),
         seed=int(raw_experiment.get("seed", defaults.get("seed", 0))),
     )

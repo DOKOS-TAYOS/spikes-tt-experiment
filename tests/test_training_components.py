@@ -21,6 +21,8 @@ from spike_mps.training.data import encode_spike_train, load_dataset_bundle
 from spike_mps.training.runner import (
     _compute_loss_components,
     _compute_output_metrics,
+    _is_better_full_checkpoint,
+    _reached_perfect_full_accuracy,
 )
 from spike_mps.writer import write_dataset_artifacts
 
@@ -123,6 +125,55 @@ def test_single_site_mps_uses_only_input_and_output_axes() -> None:
     assert scores.shape == (1, 2)
 
 
+def test_prepare_for_training_stabilizes_active_mps_parameters() -> None:
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=5,
+            input_dim=2,
+            num_classes=6,
+            bond_dim=6,
+            task="count_ones",
+        )
+    )
+    batch = torch.stack(
+        [encode_spike_train("01010"), encode_spike_train("11100")], dim=0
+    )
+
+    model.prepare_for_training()
+    parameter_names_after_prepare = {name for name, _ in model.named_parameters()}
+    _ = model(batch)
+    parameter_names_after_forward = {name for name, _ in model.named_parameters()}
+
+    assert "network.param_virtual_result_stack" in parameter_names_after_prepare
+    assert "network.param_site_1" not in parameter_names_after_prepare
+    assert "network.param_site_2" not in parameter_names_after_prepare
+    assert "network.param_site_3" not in parameter_names_after_prepare
+    assert parameter_names_after_forward == parameter_names_after_prepare
+
+
+def test_prepare_for_training_allows_optimizer_to_track_active_parameters() -> None:
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=5,
+            input_dim=2,
+            num_classes=6,
+            bond_dim=6,
+            task="count_ones",
+        )
+    )
+
+    model.prepare_for_training()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer_parameter_ids = {
+        id(parameter)
+        for parameter_group in optimizer.param_groups
+        for parameter in parameter_group["params"]
+    }
+
+    for _, parameter in model.named_parameters():
+        assert id(parameter) in optimizer_parameter_ids
+
+
 def test_select_predicted_class_uses_largest_absolute_score() -> None:
     scores = torch.tensor(
         [
@@ -185,6 +236,35 @@ def test_compute_output_metrics_summarizes_target_and_off_target_components() ->
     assert metrics["off_target_component_mean"] == pytest.approx(0.2)
     assert metrics["best_incorrect_component_mean"] == pytest.approx(0.25)
     assert metrics["target_margin_mean"] == pytest.approx(0.6)
+
+
+def test_better_checkpoint_prefers_higher_full_accuracy_over_lower_loss() -> None:
+    assert _is_better_full_checkpoint(
+        full_accuracy=0.9,
+        full_loss=10.0,
+        best_full_accuracy=0.8,
+        best_full_loss=0.1,
+    )
+
+
+def test_better_checkpoint_uses_loss_as_tiebreaker_for_equal_accuracy() -> None:
+    assert _is_better_full_checkpoint(
+        full_accuracy=0.9,
+        full_loss=0.4,
+        best_full_accuracy=0.9,
+        best_full_loss=0.5,
+    )
+    assert not _is_better_full_checkpoint(
+        full_accuracy=0.9,
+        full_loss=0.6,
+        best_full_accuracy=0.9,
+        best_full_loss=0.5,
+    )
+
+
+def test_reached_perfect_full_accuracy_detects_full_memorization() -> None:
+    assert _reached_perfect_full_accuracy(1.0)
+    assert not _reached_perfect_full_accuracy(0.999)
 
 
 def test_checkpoint_roundtrip_reconstructs_model_with_same_predictions(

@@ -1,11 +1,11 @@
 defaults:
-  batch_size: 32
-  epochs: 100
-  learning_rate: 0.001
+  batch_size: 4
+  epochs: 300
+  learning_rate: 0.01
   weight_decay: 0.0
-  bond_dim: 6
+  bond_dim: 2
   one_hot_penalty_weight: 0.25
-  patience: 15
+  patience: 50
   device: auto
   seed: 42
 

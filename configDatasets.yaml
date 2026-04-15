@@ -9,16 +9,16 @@ defaults:
 datasets:
   - name: length5_count_ones
     task: count_ones
-    sequence_length: 5
-    dataset_size: 32
+    sequence_length: 2
+    dataset_size: 4
     seed: 101
   - name: length5_count_zeros
     task: count_zeros
-    sequence_length: 5
-    dataset_size: 32
+    sequence_length: 2
+    dataset_size: 4
     seed: 102
   - name: length5_adjacent_ones_score
     task: adjacent_ones_score
-    sequence_length: 5
-    dataset_size: 32
+    sequence_length: 2
+    dataset_size: 4
     seed: 103
