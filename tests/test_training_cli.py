@@ -167,6 +167,71 @@ def test_visualize_mps_cli_reloads_checkpoint_and_prepares_visualization(
     assert "Loaded checkpoint" in visualize_completed.stdout
 
 
+def test_visualize_mps_cli_can_iterate_sample_contractions(
+    workspace_dir: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    _create_dataset_directory(
+        workspace_dir=workspace_dir,
+        name="viz_per_sample_example",
+    )
+    config_path = _write_training_config(
+        workspace_dir=workspace_dir,
+        experiment_name="viz_per_sample_example_exp",
+        dataset_name="viz_per_sample_example",
+    )
+
+    train_completed = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "train_mps.py"),
+            "--config",
+            str(config_path),
+            "--experiment",
+            "viz_per_sample_example_exp",
+        ],
+        check=False,
+        cwd=workspace_dir,
+        capture_output=True,
+        text=True,
+        env=_pythonpath_env(repo_root),
+    )
+    assert train_completed.returncode == 0, train_completed.stderr
+
+    checkpoint_path = (
+        workspace_dir
+        / "output"
+        / "processed_data"
+        / "experiments"
+        / "viz_per_sample_example_exp"
+        / "checkpoint_best.pt"
+    )
+    visualize_completed = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "visualize_mps.py"),
+            "--checkpoint",
+            str(checkpoint_path),
+            "--per-sample",
+            "--limit",
+            "2",
+            "--no-show",
+        ],
+        check=False,
+        cwd=workspace_dir,
+        capture_output=True,
+        text=True,
+        env=_pythonpath_env(repo_root),
+    )
+
+    assert visualize_completed.returncode == 0, visualize_completed.stderr
+    assert "Sample 0 | spike_train=" in visualize_completed.stdout
+    assert "Sample 1 | spike_train=" in visualize_completed.stdout
+    assert "Visualized 2 sample contraction(s) from split full." in (
+        visualize_completed.stdout
+    )
+
+
 def _create_dataset_directory(*, workspace_dir: Path, name: str) -> Path:
     config = DatasetConfig(
         name=name,

@@ -24,6 +24,10 @@ from spike_mps.training.runner import (
     _is_better_full_checkpoint,
     _reached_perfect_full_accuracy,
 )
+from spike_mps.training.visualization import (
+    visualize_checkpoint,
+    visualize_checkpoint_per_sample,
+)
 from spike_mps.writer import write_dataset_artifacts
 
 
@@ -303,6 +307,194 @@ def test_checkpoint_roundtrip_reconstructs_model_with_same_predictions(
 
     assert checkpoint["experiment_name"] == "roundtrip"
     assert torch.allclose(expected_scores, actual_scores)
+
+
+def test_visualize_checkpoint_uses_visible_theme_and_spectral_inspector(
+    workspace_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=4,
+            input_dim=2,
+            num_classes=5,
+            bond_dim=5,
+            task="count_ones",
+        )
+    )
+    checkpoint_path = workspace_dir / "checkpoint_best.pt"
+    save_checkpoint(
+        path=checkpoint_path,
+        model=model,
+        experiment_name="viz_theme_example",
+        dataset_name="viz_theme_example_dataset",
+        experiment_config={"epochs": 1, "bond_dim": 5},
+        best_epoch=1,
+        best_full_loss=0.5,
+        metrics={"full_accuracy": 0.8},
+        seed=123,
+    )
+
+    visualized_calls: list[dict[str, object]] = []
+
+    def _fake_show_tensor_network(
+        network: object,
+        *,
+        engine: str,
+        config: object,
+        show: bool,
+    ) -> tuple[object, object]:
+        visualized_calls.append(
+            {
+                "network": network,
+                "engine": engine,
+                "config": config,
+                "show": show,
+            }
+        )
+        return object(), object()
+
+    monkeypatch.setattr(
+        "spike_mps.training.visualization.show_tensor_network",
+        _fake_show_tensor_network,
+    )
+
+    visualize_checkpoint(checkpoint_path=checkpoint_path, show=False)
+
+    assert len(visualized_calls) == 1
+    assert visualized_calls[0]["network"] is not None
+    assert visualized_calls[0]["engine"] == "tensorkrowch"
+    assert visualized_calls[0]["show"] is False
+    assert visualized_calls[0]["config"].theme == "paper"
+    assert visualized_calls[0]["config"].contraction_tensor_inspector is True
+    assert visualized_calls[0]["config"].tensor_inspector_config.theme == "spectral"
+
+
+def test_visualize_checkpoint_per_sample_uses_dataset_records_and_contraction_scheme(
+    workspace_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_dir = _create_dataset_directory(
+        workspace_dir=workspace_dir,
+        name="viz_samples_example",
+        task="count_ones",
+        sequence_length=4,
+        dataset_size=16,
+    )
+    bundle = load_dataset_bundle(dataset_dir=dataset_dir)
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=bundle.sequence_length,
+            input_dim=2,
+            num_classes=bundle.num_classes,
+            bond_dim=5,
+            task=bundle.task,
+        )
+    )
+    checkpoint_path = (
+        workspace_dir
+        / "output"
+        / "processed_data"
+        / "experiments"
+        / "viz_samples_example_exp"
+        / "checkpoint_best.pt"
+    )
+    save_checkpoint(
+        path=checkpoint_path,
+        model=model,
+        experiment_name="viz_samples_example_exp",
+        dataset_name="viz_samples_example",
+        experiment_config={"epochs": 1, "bond_dim": 5},
+        best_epoch=1,
+        best_full_loss=0.5,
+        metrics={"full_accuracy": 0.8},
+        seed=123,
+    )
+
+    visualized_calls: list[dict[str, object]] = []
+
+    def _fake_show_tensor_network(
+        network: object,
+        *,
+        engine: str,
+        config: object,
+        show: bool,
+    ) -> tuple[object, object]:
+        visualized_calls.append(
+            {
+                "network": network,
+                "engine": engine,
+                "config": config,
+                "show": show,
+            }
+        )
+        return object(), object()
+
+    monkeypatch.setattr(
+        "spike_mps.training.visualization.show_tensor_network",
+        _fake_show_tensor_network,
+    )
+
+    summaries = visualize_checkpoint_per_sample(
+        checkpoint_path=checkpoint_path,
+        split="full",
+        limit=2,
+        show=False,
+    )
+
+    assert len(summaries) == 2
+    assert len(visualized_calls) == 2
+    assert all(call["engine"] == "tensorkrowch" for call in visualized_calls)
+    assert all(call["show"] is False for call in visualized_calls)
+    assert all(
+        getattr(call["config"], "show_contraction_scheme", False) is True
+        for call in visualized_calls
+    )
+    assert all(
+        getattr(call["config"], "contraction_tensor_inspector", False) is True
+        for call in visualized_calls
+    )
+    assert all(
+        getattr(call["config"].tensor_inspector_config, "theme", None) == "spectral"
+        for call in visualized_calls
+    )
+    assert [node.name for node in visualized_calls[0]["network"]] == [
+        "site_0",
+        "site_1",
+        "site_2",
+        "site_3",
+        "data_0",
+        "data_1",
+        "data_2",
+        "data_3",
+    ]
+    assert visualized_calls[0]["config"].contraction_scheme_by_name == (
+        ("site_0", "data_0"),
+        ("site_1", "data_1"),
+        ("site_0", "data_0", "site_1", "data_1"),
+        ("site_2", "data_2"),
+        ("site_0", "data_0", "site_1", "data_1", "site_2", "data_2"),
+        ("site_3", "data_3"),
+        (
+            "site_0",
+            "data_0",
+            "site_1",
+            "data_1",
+            "site_2",
+            "data_2",
+            "site_3",
+            "data_3",
+        ),
+    )
+
+    first_record = bundle.full_dataset.records[0]
+    second_record = bundle.full_dataset.records[1]
+    assert summaries[0].sample_index == 0
+    assert summaries[0].spike_train == first_record.spike_train
+    assert summaries[0].label == first_record.label
+    assert summaries[1].sample_index == 1
+    assert summaries[1].spike_train == second_record.spike_train
+    assert len(summaries[0].scores) == bundle.num_classes
 
 
 def _create_dataset_directory(

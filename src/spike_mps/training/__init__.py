@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 from spike_mps.training.runner import run_training_experiment
-from spike_mps.training.visualization import visualize_checkpoint
+from spike_mps.training.visualization import (
+    visualize_checkpoint,
+    visualize_checkpoint_per_sample,
+)
 
-__all__ = ["run_training_experiment", "visualize_checkpoint"]
+__all__ = [
+    "run_training_experiment",
+    "visualize_checkpoint",
+    "visualize_checkpoint_per_sample",
+]

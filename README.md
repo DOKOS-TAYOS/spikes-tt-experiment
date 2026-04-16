@@ -91,17 +91,7 @@ Train `count_ones`:
 
 ```bash
 python scripts/train_mps.py --config configTraining.yaml --experiment mps_length5_count_ones
-```
-
-Train `count_zeros`:
-
-```bash
 python scripts/train_mps.py --config configTraining.yaml --experiment mps_length5_count_zeros
-```
-
-Train `adjacent_ones_score`:
-
-```bash
 python scripts/train_mps.py --config configTraining.yaml --experiment mps_length5_adjacent_ones_score
 ```
 
@@ -117,24 +107,33 @@ Open the `count_ones` checkpoint:
 
 ```bash
 python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt
-```
-
-Open the `count_zeros` checkpoint:
-
-```bash
 python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_zeros/checkpoint_best.pt
-```
-
-Open the `adjacent_ones_score` checkpoint:
-
-```bash
 python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_adjacent_ones_score/checkpoint_best.pt
 ```
+
+To inspect the contraction scheme for each sample in the dataset linked to the checkpoint, use `--per-sample`:
+
+```bash
+python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt --per-sample
+python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_zeros/checkpoint_best.pt --per-sample
+python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_adjacent_ones_score/checkpoint_best.pt --per-sample
+```
+
+For a quick inspection without opening the whole dataset, add `--limit`:
+
+```bash
+python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt --per-sample --limit 3
+python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_zeros/checkpoint_best.pt --per-sample --limit 3
+python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_adjacent_ones_score/checkpoint_best.pt --per-sample --limit 3
+```
+
+When `--per-sample` is active, the command contracts the network with each spike train from the selected split, opens the contraction view for that sample, and prints the `spike_train`, labels, prediction, and output scores in the console.
 
 For automated checks or headless environments, add `--no-show` to any of the commands above:
 
 ```bash
 python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt --no-show
+python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt --per-sample --no-show
 ```
 
 The training and visualization workflow is documented in `docs/training_visualization.md`.
