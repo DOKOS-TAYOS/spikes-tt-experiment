@@ -6,10 +6,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import torch
 import yaml
 
 from spike_mps.config import DatasetConfig, SplitRatios
 from spike_mps.generation import build_dataset_artifacts
+from spike_mps.models.mps_classifier import MPSClassifier, MPSModelConfig
+from spike_mps.training.checkpoints import save_checkpoint
 from spike_mps.writer import write_dataset_artifacts
 
 
@@ -232,6 +235,32 @@ def test_visualize_mps_cli_can_iterate_sample_contractions(
     )
 
 
+def test_canonicalize_mps_cli_saves_exact_canonical_checkpoint(
+    workspace_dir: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    checkpoint_path = _create_perfect_count_ones_checkpoint(workspace_dir=workspace_dir)
+
+    canonicalize_completed = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "canonicalize_mps.py"),
+            "--checkpoint",
+            str(checkpoint_path),
+        ],
+        check=False,
+        cwd=workspace_dir,
+        capture_output=True,
+        text=True,
+        env=_pythonpath_env(repo_root),
+    )
+
+    assert canonicalize_completed.returncode == 0, canonicalize_completed.stderr
+    assert "Accuracy before canonicalization: 1.0000" in canonicalize_completed.stdout
+    assert "Accuracy after canonicalization: 1.0000" in canonicalize_completed.stdout
+    assert (checkpoint_path.parent / "checkpoint_canonical.pt").exists()
+
+
 def _create_dataset_directory(*, workspace_dir: Path, name: str) -> Path:
     config = DatasetConfig(
         name=name,
@@ -246,6 +275,66 @@ def _create_dataset_directory(*, workspace_dir: Path, name: str) -> Path:
     artifacts = build_dataset_artifacts(config=config)
     output_root = workspace_dir / "datasets" / "generated"
     return write_dataset_artifacts(artifacts=artifacts, output_root=output_root)
+
+
+def _create_perfect_count_ones_checkpoint(*, workspace_dir: Path) -> Path:
+    config = DatasetConfig(
+        name="canonical_cli_example",
+        task="count_ones",
+        sequence_length=2,
+        dataset_size=4,
+        seed=9,
+        split_ratios=SplitRatios(train=0.5, val=0.25, test=0.25),
+        label_noise_pct=0.0,
+        noise_scope="train",
+    )
+    artifacts = build_dataset_artifacts(config=config)
+    output_root = workspace_dir / "datasets" / "generated"
+    write_dataset_artifacts(artifacts=artifacts, output_root=output_root)
+
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=2,
+            input_dim=2,
+            num_classes=3,
+            bond_dim=3,
+            task="count_ones",
+        )
+    )
+    model.network.site_nodes[0].tensor = torch.tensor(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+    site_1_tensor = torch.zeros((3, 2, 3), dtype=torch.float32)
+    site_1_tensor[0, 0, 0] = 1.0
+    site_1_tensor[0, 1, 1] = 1.0
+    site_1_tensor[1, 0, 1] = 1.0
+    site_1_tensor[1, 1, 2] = 1.0
+    model.network.site_nodes[1].tensor = site_1_tensor
+
+    checkpoint_path = (
+        workspace_dir
+        / "output"
+        / "processed_data"
+        / "experiments"
+        / "canonical_cli_example_exp"
+        / "checkpoint_best.pt"
+    )
+    save_checkpoint(
+        path=checkpoint_path,
+        model=model,
+        experiment_name="canonical_cli_example_exp",
+        dataset_name="canonical_cli_example",
+        experiment_config={"epochs": 1, "bond_dim": 3},
+        best_epoch=1,
+        best_full_loss=0.0,
+        metrics={"full_accuracy": 1.0},
+        seed=0,
+    )
+    return checkpoint_path
 
 
 def _write_training_config(

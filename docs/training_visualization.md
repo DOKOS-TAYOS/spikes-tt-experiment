@@ -110,3 +110,26 @@ python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/m
 ```
 
 The project does not implement a separate tensor inspector. It reconstructs the trained `tensorkrowch` model, resets any traced contraction byproducts, and delegates visualization to `show_tensor_network` from `tensor-network-visualization`.
+
+## Post-training canonicalization
+
+To canonicalize a trained checkpoint and save the result as a separate file:
+
+```bash
+python scripts/canonicalize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt
+```
+
+By default, the command writes `checkpoint_canonical.pt` in the same directory as
+the input checkpoint.
+
+The command first checks that the original checkpoint already reaches `1.0`
+accuracy on `full.csv`. It then canonicalizes the tensor network exactly, runs the
+canonicalized model again on the same full dataset, and saves the new checkpoint
+only if the accuracy stays at `1.0`.
+
+You can choose the exact factorization used during the sweep:
+
+```bash
+python scripts/canonicalize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt --mode svd
+python scripts/canonicalize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt --mode qr
+```

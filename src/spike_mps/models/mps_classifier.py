@@ -11,13 +11,15 @@ from torch import nn
 
 from spike_mps.config import TaskName
 
+type BondDimensionSpec = int | tuple[int, ...]
+
 
 @dataclass(frozen=True)
 class MPSModelConfig:
     sequence_length: int
     input_dim: int
     num_classes: int
-    bond_dim: int
+    bond_dim: BondDimensionSpec
     task: TaskName
 
     def __post_init__(self) -> None:
@@ -27,25 +29,47 @@ class MPSModelConfig:
             raise ValueError("input_dim must be greater than zero.")
         if self.num_classes <= 1:
             raise ValueError("num_classes must be greater than one.")
-        if self.bond_dim <= 0:
-            raise ValueError("bond_dim must be greater than zero.")
+        if isinstance(self.bond_dim, int):
+            if self.bond_dim <= 0:
+                raise ValueError("bond_dim must be greater than zero.")
+            return
+        if len(self.bond_dim) != max(self.sequence_length - 1, 0):
+            raise ValueError("bond_dim sequence must have one entry per internal bond.")
+        if any(bond_dimension <= 0 for bond_dimension in self.bond_dim):
+            raise ValueError("All bond dimensions must be greater than zero.")
 
-    def to_dict(self) -> dict[str, int | str]:
+    @property
+    def resolved_bond_dims(self) -> tuple[int, ...]:
+        if self.sequence_length == 1:
+            return ()
+        if isinstance(self.bond_dim, int):
+            return (self.bond_dim,) * (self.sequence_length - 1)
+        return self.bond_dim
+
+    def to_dict(self) -> dict[str, int | str | list[int]]:
         return {
             "sequence_length": self.sequence_length,
             "input_dim": self.input_dim,
             "num_classes": self.num_classes,
-            "bond_dim": self.bond_dim,
+            "bond_dim": (
+                self.bond_dim if isinstance(self.bond_dim, int) else list(self.bond_dim)
+            ),
             "task": self.task,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MPSModelConfig:
+        raw_bond_dim = data["bond_dim"]
+        bond_dim: BondDimensionSpec
+        if isinstance(raw_bond_dim, list):
+            bond_dim = tuple(int(value) for value in raw_bond_dim)
+        else:
+            bond_dim = int(raw_bond_dim)
         return cls(
             sequence_length=int(data["sequence_length"]),
             input_dim=int(data["input_dim"]),
             num_classes=int(data["num_classes"]),
-            bond_dim=int(data["bond_dim"]),
+            bond_dim=bond_dim,
             task=str(data["task"]),
         )
 
@@ -82,7 +106,7 @@ class ManualMPSNetwork(tk.TensorNetwork):
         else:
             result = self.site_nodes[0] @ data_nodes[0]
 
-            if len(self.site_nodes) > 2:
+            if len(self.site_nodes) > 2 and self._can_use_stacked_bulk_contraction():
                 stacked_site_nodes = tk.stack(self.site_nodes[1:-1])
                 stacked_data_nodes = tk.stack(data_nodes[1:-1])
                 stacked_site_nodes ^ stacked_data_nodes
@@ -92,11 +116,28 @@ class ManualMPSNetwork(tk.TensorNetwork):
 
                 for node in contracted_bulk_nodes:
                     result @= node
+            else:
+                for site_node, data_node in zip(
+                    self.site_nodes[1:-1], data_nodes[1:-1], strict=True
+                ):
+                    result @= site_node @ data_node
 
             last_result = self.site_nodes[-1] @ data_nodes[-1]
             result @= last_result
 
         return tk.permute(result, ("batch", "output"))
+
+    def _can_use_stacked_bulk_contraction(self) -> bool:
+        bulk_site_nodes = self.site_nodes[1:-1]
+        if len(bulk_site_nodes) <= 1:
+            return False
+        reference_shape = tuple(
+            int(dimension) for dimension in bulk_site_nodes[0].shape
+        )
+        return all(
+            tuple(int(dimension) for dimension in node.shape) == reference_shape
+            for node in bulk_site_nodes[1:]
+        )
 
     def _build_site_nodes(
         self,
@@ -133,6 +174,7 @@ class ManualMPSNetwork(tk.TensorNetwork):
         *,
         index: int,
     ) -> tuple[tuple[int, ...], tuple[str, ...]]:
+        bond_dims = self.config.resolved_bond_dims
         if self.config.sequence_length == 1:
             return (
                 (self.config.input_dim, self.config.num_classes),
@@ -140,16 +182,16 @@ class ManualMPSNetwork(tk.TensorNetwork):
             )
         if index == 0:
             return (
-                (self.config.input_dim, self.config.bond_dim),
+                (self.config.input_dim, bond_dims[0]),
                 ("input", "right"),
             )
         if index == self.config.sequence_length - 1:
             return (
-                (self.config.bond_dim, self.config.input_dim, self.config.num_classes),
+                (bond_dims[-1], self.config.input_dim, self.config.num_classes),
                 ("left", "input", "output"),
             )
         return (
-            (self.config.bond_dim, self.config.input_dim, self.config.bond_dim),
+            (bond_dims[index - 1], self.config.input_dim, bond_dims[index]),
             ("left", "input", "right"),
         )
 

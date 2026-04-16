@@ -136,6 +136,20 @@ python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/m
 python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt --per-sample --no-show
 ```
 
+## Post-Training Canonicalization
+
+You can canonicalize a trained checkpoint after training and save the result as a
+new checkpoint:
+
+```bash
+python scripts/canonicalize_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt
+```
+
+By default, the command writes `checkpoint_canonical.pt` next to the input
+checkpoint. Before saving, it reevaluates the canonicalized model on the full
+dataset linked to the checkpoint and refuses to save unless the accuracy remains
+exactly `1.0`.
+
 The training and visualization workflow is documented in `docs/training_visualization.md`.
 
 ## What Would Count as Supportive Evidence

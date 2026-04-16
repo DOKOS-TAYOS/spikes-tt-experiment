@@ -156,12 +156,16 @@ def _build_plot_config(
     show_contraction_scheme: bool = False,
     contraction_scheme_by_name: tuple[tuple[str, ...], ...] | None = None,
 ) -> PlotConfig:
-    return PlotConfig(
+    plot_config = PlotConfig(
         show_contraction_scheme=show_contraction_scheme,
         contraction_tensor_inspector=True,
-        tensor_inspector_config=TensorElementsConfig(theme="grayscale"),
+        theme="paper",
         contraction_scheme_by_name=contraction_scheme_by_name,
     )
+    tensor_inspector_config = TensorElementsConfig()
+    object.__setattr__(tensor_inspector_config, "theme", "spectral")
+    object.__setattr__(plot_config, "tensor_inspector_config", tensor_inspector_config)
+    return plot_config
 
 
 def _build_contraction_scheme_by_name(

@@ -13,6 +13,7 @@ from spike_mps.models.mps_classifier import (
     MPSModelConfig,
     select_predicted_class,
 )
+from spike_mps.training.canonicalization import canonicalize_model
 from spike_mps.training.checkpoints import (
     load_model_from_checkpoint,
     save_checkpoint,
@@ -309,6 +310,26 @@ def test_checkpoint_roundtrip_reconstructs_model_with_same_predictions(
     assert torch.allclose(expected_scores, actual_scores)
 
 
+def test_canonicalize_model_preserves_outputs_and_reduces_bond_dim() -> None:
+    model = _build_perfect_count_ones_length2_model()
+    batch = torch.stack(
+        [
+            encode_spike_train("00"),
+            encode_spike_train("01"),
+            encode_spike_train("10"),
+            encode_spike_train("11"),
+        ],
+        dim=0,
+    )
+    expected_scores = model(batch).detach()
+
+    canonical_model = canonicalize_model(model=model, mode="svd")
+    actual_scores = canonical_model(batch).detach()
+
+    assert canonical_model.config.bond_dim == (2,)
+    assert torch.allclose(expected_scores, actual_scores)
+
+
 def test_visualize_checkpoint_uses_visible_theme_and_spectral_inspector(
     workspace_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -518,3 +539,29 @@ def _create_dataset_directory(
     artifacts = build_dataset_artifacts(config=config)
     output_root = workspace_dir / "datasets" / "generated"
     return write_dataset_artifacts(artifacts=artifacts, output_root=output_root)
+
+
+def _build_perfect_count_ones_length2_model() -> MPSClassifier:
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=2,
+            input_dim=2,
+            num_classes=3,
+            bond_dim=3,
+            task="count_ones",
+        )
+    )
+    model.network.site_nodes[0].tensor = torch.tensor(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+    site_1_tensor = torch.zeros((3, 2, 3), dtype=torch.float32)
+    site_1_tensor[0, 0, 0] = 1.0
+    site_1_tensor[0, 1, 1] = 1.0
+    site_1_tensor[1, 0, 1] = 1.0
+    site_1_tensor[1, 1, 2] = 1.0
+    model.network.site_nodes[1].tensor = site_1_tensor
+    return model
