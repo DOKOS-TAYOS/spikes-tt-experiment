@@ -550,6 +550,63 @@ def test_canonicalize_model_preserves_outputs_and_reduces_bond_dim() -> None:
     assert torch.allclose(expected_scores, actual_scores)
 
 
+def test_visualization_network_forward_matches_model_forward() -> None:
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=3,
+            input_dim=2,
+            num_classes=4,
+            bond_dim=4,
+            task="count_ones",
+        )
+    )
+    model.network.site_nodes[0].tensor = torch.nn.Parameter(
+        torch.tensor(
+            [
+                [-1.0, 0.5, 0.0, 0.0],
+                [0.0, -2.0, 1.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    model.network.site_nodes[1].tensor = torch.nn.Parameter(
+        torch.tensor(
+            [
+                [[1.0, 0.0, -1.0, 0.0], [0.0, 2.0, 0.0, 0.0]],
+                [[0.0, 1.0, 0.0, 0.0], [-1.0, 0.0, 0.0, 2.0]],
+                [[0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0]],
+                [[0.0, 0.0, 0.0, 1.0], [0.5, 0.0, 0.0, -1.0]],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    model.network.site_nodes[2].tensor = torch.nn.Parameter(
+        torch.tensor(
+            [
+                [[1.0, 0.0, 0.0, 0.0], [0.0, -1.0, 0.0, 0.0]],
+                [[0.0, 1.0, 0.0, 0.0], [0.0, 0.0, -1.0, 0.0]],
+                [[0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, -1.0]],
+                [[0.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0]],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    batch = torch.stack(
+        [
+            encode_spike_train("000"),
+            encode_spike_train("101"),
+        ],
+        dim=0,
+    )
+
+    actual_scores = model(batch)
+    display_network = model.build_visualization_network()
+    display_network.reset()
+    visualized_scores = display_network(batch)
+
+    assert torch.allclose(actual_scores, visualized_scores)
+
+
 def test_visualize_checkpoint_uses_visible_theme_and_grayscale_inspector(
     workspace_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -637,11 +694,16 @@ def test_visualize_checkpoint_uses_visible_theme_and_grayscale_inspector(
         "#D4D4D4",
         "#FFFFFF",
     )
-    visualized_network = visualized_calls[0]["network"]
-    assert torch.equal(
-        visualized_network.site_nodes[0].tensor,
-        model.network.site_nodes[0].tensor.square(),
-    )
+    visualized_nodes = visualized_calls[0]["network"]
+    assert [node.name for node in visualized_nodes] == ["site_0", "site_1"]
+    for node, effective_tensor, raw_node in zip(
+        visualized_nodes,
+        model.effective_site_tensors(),
+        model.network.site_nodes,
+        strict=True,
+    ):
+        assert torch.equal(node.tensor, effective_tensor)
+        assert not torch.equal(node.tensor, raw_node.tensor)
 
 
 def test_build_plot_config_falls_back_when_tensor_elements_theme_is_unsupported(

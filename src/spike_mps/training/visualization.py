@@ -54,6 +54,7 @@ def visualize_checkpoint(
     model, _checkpoint = load_model_from_checkpoint(checkpoint_path)
     display_network = model.build_visualization_network()
     display_network.reset()
+    visible_nodes = _build_visible_mps_nodes(network=display_network)
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
@@ -61,7 +62,7 @@ def visualize_checkpoint(
             category=UserWarning,
         )
         fig, ax = show_tensor_network(
-            display_network,
+            visible_nodes,
             engine="tensorkrowch",
             config=_build_plot_config(),
             show=show,
@@ -188,6 +189,10 @@ def _contract_display_network(
 def _build_visible_contracted_nodes(*, network: ManualMPSNetwork) -> list[object]:
     data_nodes = list(network.data_nodes.values())
     return [*network.site_nodes, *data_nodes]
+
+
+def _build_visible_mps_nodes(*, network: ManualMPSNetwork) -> list[object]:
+    return list(network.site_nodes)
 
 
 def _build_plot_config(
