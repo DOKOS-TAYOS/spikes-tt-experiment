@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import math
-import warnings
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import tensorkrowch as tk
 import torch
@@ -12,6 +11,9 @@ from torch import nn
 from spike_mps.config import TaskName
 
 type BondDimensionSpec = int | tuple[int, ...]
+type Parameterization = Literal["squared_positive", "direct"]
+
+_VALID_PARAMETERIZATIONS: set[str] = {"squared_positive", "direct"}
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,7 @@ class MPSModelConfig:
     num_classes: int
     bond_dim: BondDimensionSpec
     task: TaskName
+    parameterization: Parameterization = "squared_positive"
 
     def __post_init__(self) -> None:
         if self.sequence_length <= 0:
@@ -29,6 +32,8 @@ class MPSModelConfig:
             raise ValueError("input_dim must be greater than zero.")
         if self.num_classes <= 1:
             raise ValueError("num_classes must be greater than one.")
+        if self.parameterization not in _VALID_PARAMETERIZATIONS:
+            raise ValueError(f"Unknown parameterization: {self.parameterization}")
         if isinstance(self.bond_dim, int):
             if self.bond_dim <= 0:
                 raise ValueError("bond_dim must be greater than zero.")
@@ -55,6 +60,7 @@ class MPSModelConfig:
                 self.bond_dim if isinstance(self.bond_dim, int) else list(self.bond_dim)
             ),
             "task": self.task,
+            "parameterization": self.parameterization,
         }
 
     @classmethod
@@ -71,13 +77,14 @@ class MPSModelConfig:
             num_classes=int(data["num_classes"]),
             bond_dim=bond_dim,
             task=str(data["task"]),
+            parameterization=str(data.get("parameterization", "direct")),
         )
 
 
 def select_predicted_class(scores: torch.Tensor) -> torch.Tensor:
     if scores.ndim != 2:
         raise ValueError("scores must have shape (batch_size, num_classes).")
-    return torch.argmax(scores.abs(), dim=1)
+    return torch.argmax(scores, dim=1)
 
 
 class ManualMPSNetwork(tk.TensorNetwork):
@@ -161,6 +168,7 @@ class ManualMPSNetwork(tk.TensorNetwork):
                 shape=shape,
                 device=device,
                 dtype=dtype,
+                parameterization=self.config.parameterization,
             )
             site_nodes.append(node)
 
@@ -201,10 +209,29 @@ def _initialize_site_tensor(
     shape: tuple[int, ...],
     device: torch.device | None,
     dtype: torch.dtype | None,
+    parameterization: Parameterization,
 ) -> torch.Tensor:
     resolved_dtype = dtype if dtype is not None else torch.get_default_dtype()
-    std = 1.0 / math.sqrt(max(shape[0], shape[-1], 1))
-    return torch.randn(shape, device=device, dtype=resolved_dtype) * std
+    effective_std = 1.0 / math.sqrt(max(shape[0], shape[-1], 1))
+    raw_std = (
+        math.sqrt(effective_std)
+        if parameterization == "squared_positive"
+        else effective_std
+    )
+    return torch.randn(shape, device=device, dtype=resolved_dtype) * raw_std
+
+
+def build_network_with_tensors(
+    *,
+    config: MPSModelConfig,
+    site_tensors: list[torch.Tensor],
+    device: torch.device | None,
+    dtype: torch.dtype | None,
+) -> ManualMPSNetwork:
+    network = ManualMPSNetwork(config=config, device=device, dtype=dtype)
+    for node, tensor in zip(network.site_nodes, site_tensors, strict=True):
+        node.tensor = tensor.to(device=device, dtype=dtype)
+    return network
 
 
 class MPSClassifier(nn.Module):
@@ -224,35 +251,63 @@ class MPSClassifier(nn.Module):
         )
 
     def prepare_for_training(self) -> None:
+        # The model now uses a manual torch contraction during forward.
+        # Keeping this method preserves the public API used by scripts and tests.
+        return None
+
+    def raw_site_tensors(self) -> list[torch.Tensor]:
+        return [node.tensor for node in self.network.site_nodes]
+
+    def effective_site_tensors(self) -> list[torch.Tensor]:
+        raw_tensors = self.raw_site_tensors()
+        if self.config.parameterization == "squared_positive":
+            return [tensor.square() for tensor in raw_tensors]
+        return raw_tensors
+
+    def visualization_site_tensors(self) -> list[torch.Tensor]:
+        return [tensor.detach().clone() for tensor in self.effective_site_tensors()]
+
+    def build_visualization_network(self) -> ManualMPSNetwork:
         reference_parameter = next(self.parameters())
-        example = torch.zeros(
-            (1, self.config.sequence_length, self.config.input_dim),
+        return build_network_with_tensors(
+            config=self.config,
+            site_tensors=self.visualization_site_tensors(),
             device=reference_parameter.device,
             dtype=reference_parameter.dtype,
         )
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=r"`tensor` is being cropped to fit the shape of node .*",
-                category=UserWarning,
-            )
-            warnings.filterwarnings(
-                "ignore",
-                message=r"Using a non-tuple sequence for multidimensional indexing.*",
-                category=UserWarning,
-            )
-            self.network.trace(example)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=r"`tensor` is being cropped to fit the shape of node .*",
-                category=UserWarning,
-            )
-            warnings.filterwarnings(
-                "ignore",
-                message=r"Using a non-tuple sequence for multidimensional indexing.*",
-                category=UserWarning,
-            )
-            return self.network(inputs).squeeze(dim=1)
+        return _contract_site_tensors(
+            site_tensors=self.effective_site_tensors(),
+            inputs=inputs,
+        )
+
+
+def _contract_site_tensors(
+    *,
+    site_tensors: list[torch.Tensor],
+    inputs: torch.Tensor,
+) -> torch.Tensor:
+    if inputs.ndim != 3:
+        raise ValueError(
+            "inputs must have shape (batch_size, sequence_length, input_dim)."
+        )
+    if inputs.shape[1] != len(site_tensors):
+        raise ValueError("inputs sequence_length does not match the MPS definition.")
+    if len(site_tensors) == 1:
+        return torch.einsum("bi,io->bo", inputs[:, 0, :], site_tensors[0])
+
+    result = torch.einsum("bi,ir->br", inputs[:, 0, :], site_tensors[0])
+    for index, site_tensor in enumerate(site_tensors[1:-1], start=1):
+        result = torch.einsum(
+            "bl,bi,lir->br",
+            result,
+            inputs[:, index, :],
+            site_tensor,
+        )
+    return torch.einsum(
+        "bl,bi,lio->bo",
+        result,
+        inputs[:, -1, :],
+        site_tensors[-1],
+    )

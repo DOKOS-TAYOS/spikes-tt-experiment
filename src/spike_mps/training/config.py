@@ -21,6 +21,7 @@ class TrainingExperimentConfig:
     weight_decay: float
     bond_dim: int
     one_hot_penalty_weight: float
+    concentration_penalty_weight: float
     patience: int
     device: DeviceName
     seed: int
@@ -42,6 +43,8 @@ class TrainingExperimentConfig:
             raise ValueError("bond_dim must be greater than zero.")
         if self.one_hot_penalty_weight < 0:
             raise ValueError("one_hot_penalty_weight must be non-negative.")
+        if self.concentration_penalty_weight < 0:
+            raise ValueError("concentration_penalty_weight must be non-negative.")
         if self.patience <= 0:
             raise ValueError("patience must be greater than zero.")
         if self.device not in _VALID_DEVICES:
@@ -57,6 +60,7 @@ class TrainingExperimentConfig:
             "weight_decay": self.weight_decay,
             "bond_dim": self.bond_dim,
             "one_hot_penalty_weight": self.one_hot_penalty_weight,
+            "concentration_penalty_weight": self.concentration_penalty_weight,
             "patience": self.patience,
             "device": self.device,
             "seed": self.seed,
@@ -144,6 +148,12 @@ def _build_experiment_config(
             raw_experiment.get(
                 "one_hot_penalty_weight",
                 defaults.get("one_hot_penalty_weight", 0.25),
+            )
+        ),
+        concentration_penalty_weight=float(
+            raw_experiment.get(
+                "concentration_penalty_weight",
+                defaults.get("concentration_penalty_weight", 0.0),
             )
         ),
         patience=int(raw_experiment.get("patience", defaults.get("patience", 50))),

@@ -32,7 +32,9 @@ def canonicalize_model(
     model: MPSClassifier,
     mode: CanonicalizationMode = "svd",
 ) -> MPSClassifier:
-    site_tensors = [node.tensor.detach().clone() for node in model.network.site_nodes]
+    site_tensors = [
+        tensor.detach().clone() for tensor in model.effective_site_tensors()
+    ]
     canonical_site_tensors = _left_canonicalize_site_tensors(
         site_tensors=site_tensors,
         mode=mode,
@@ -189,6 +191,7 @@ def _build_config_from_site_tensors(
             num_classes=int(site_tensors[0].shape[1]),
             bond_dim=fallback_bond_dim,
             task=task,
+            parameterization="direct",
         )
     bond_dims = tuple(int(site_tensor.shape[-1]) for site_tensor in site_tensors[:-1])
     return MPSModelConfig(
@@ -197,6 +200,7 @@ def _build_config_from_site_tensors(
         num_classes=int(site_tensors[-1].shape[-1]),
         bond_dim=bond_dims,
         task=task,
+        parameterization="direct",
     )
 
 

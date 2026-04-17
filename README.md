@@ -85,7 +85,8 @@ For the current length-5 experiments, set:
 
 - `bond_dim = sequence_length + 1 = 6`
 - `num_classes = sequence_length + 1 = 6`
-- `one_hot_penalty_weight = 0.25`
+- `one_hot_penalty_weight = 1.0`
+- `concentration_penalty_weight = 0.25`
 
 Train `count_ones`:
 
@@ -97,9 +98,11 @@ python scripts/train_mps.py --config configTraining.yaml --experiment mps_length
 
 Training uses `full.csv` both for optimization and for the checkpoint selection criterion, because the purpose of this experiment is to study the fully memorized limit rather than generalization.
 
-The classifier is implemented as a manual `tensorkrowch` tensor network with one site tensor per spike-train position. The first tensor carries only `input` and `right`, the intermediate tensors carry `left`, `input`, and `right`, and only the last tensor carries the class `output` index. After contracting the network with an encoded spike train, the model returns one score per category. Training uses `abs(score)` inside a composite objective: cross-entropy on the correct class plus an MSE penalty that pushes the full output vector toward a one-hot target. Prediction still chooses the category with the largest absolute score.
+The classifier is implemented as a manual `tensorkrowch` tensor network with one site tensor per spike-train position. The first tensor carries only `input` and `right`, the intermediate tensors carry `left`, `input`, and `right`, and only the last tensor carries the class `output` index. The stored trainable values are now raw parameters, but the effective tensors used in the MPS contraction are their elementwise squares. This makes the training-time MPS strictly nonnegative and removes sign cancellations from the forward pass.
 
-During training, the console now prints one compact line per epoch with the loss split, accuracy, target activation, off-target activation, and target margin. At the end it also prints a final summary over the full dataset. The same metrics are written to `history.csv` and `metrics.yaml`.
+After contracting the network with an encoded spike train, the model returns one nonnegative score per category. Training uses a composite objective with three terms: cross-entropy on the direct scores, an MSE penalty that pushes the full output vector toward a one-hot target, and a concentration penalty based on the normalized entropy of each effective site tensor so that the network tends to place most of its mass in a small number of entries. Prediction chooses the category with the largest direct score.
+
+During training, the console now prints one compact line per epoch with the loss split, including the concentration term, together with accuracy, target activation, off-target activation, and target margin. At the end it also prints a final summary over the full dataset. The same metrics are written to `history.csv` and `metrics.yaml`.
 
 ## Interactive Visualization
 
@@ -127,7 +130,7 @@ python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/m
 python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/mps_length5_adjacent_ones_score/checkpoint_best.pt --per-sample --limit 3
 ```
 
-When `--per-sample` is active, the command contracts the network with each spike train from the selected split, opens the contraction view for that sample, and prints the `spike_train`, labels, prediction, and output scores in the console.
+When `--per-sample` is active, the command contracts the network with each spike train from the selected split, opens the contraction view for that sample, and prints the `spike_train`, labels, prediction, and output scores in the console. For training checkpoints, the visualization shows the effective positive tensors used in the forward contraction, not the unsquared raw parameters.
 
 For automated checks or headless environments, add `--no-show` to any of the commands above:
 
@@ -149,6 +152,12 @@ By default, the command writes `checkpoint_canonical.pt` next to the input
 checkpoint. Before saving, it reevaluates the canonicalized model on the full
 dataset linked to the checkpoint and refuses to save unless the accuracy remains
 exactly `1.0`.
+
+The canonical checkpoint is an exact analysis artifact. If the source model uses
+the positive squared parameterization, the command first canonicalizes the
+effective positive tensors and then saves the canonicalized network as a
+`direct` checkpoint. That canonical form may contain signs internally, while the
+original training checkpoint remains a positive-MPS checkpoint.
 
 The training and visualization workflow is documented in `docs/training_visualization.md`.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,7 +11,11 @@ import matplotlib.pyplot as plt
 import torch
 from tensor_network_viz import PlotConfig, TensorElementsConfig, show_tensor_network
 
-from spike_mps.models.mps_classifier import MPSClassifier, select_predicted_class
+from spike_mps.models.mps_classifier import (
+    ManualMPSNetwork,
+    MPSClassifier,
+    select_predicted_class,
+)
 from spike_mps.training.checkpoints import load_model_from_checkpoint
 from spike_mps.training.data import (
     DatasetBundle,
@@ -47,7 +52,8 @@ def visualize_checkpoint(
     #         )
 
     model, _checkpoint = load_model_from_checkpoint(checkpoint_path)
-    model.network.reset()
+    display_network = model.build_visualization_network()
+    display_network.reset()
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
@@ -55,11 +61,12 @@ def visualize_checkpoint(
             category=UserWarning,
         )
         fig, ax = show_tensor_network(
-            model.network,
+            display_network,
             engine="tensorkrowch",
             config=_build_plot_config(),
             show=show,
         )
+    _close_figure(fig=fig, show=show)
     return fig, ax
 
 
@@ -89,7 +96,9 @@ def visualize_checkpoint_per_sample(
         scores = _contract_sample(model=model, record=record)
         predicted_label = int(select_predicted_class(scores).item())
         score_values = tuple(float(value) for value in scores.squeeze(0).tolist())
-        visible_nodes = _build_visible_contracted_nodes(model=model)
+        display_network = model.build_visualization_network()
+        _contract_display_network(network=display_network, record=record)
+        visible_nodes = _build_visible_contracted_nodes(network=display_network)
         fig, _ax = show_tensor_network(
             visible_nodes,
             engine="tensorkrowch",
@@ -146,9 +155,39 @@ def _contract_sample(
             return model(encoded_sample).detach().cpu()
 
 
-def _build_visible_contracted_nodes(*, model: MPSClassifier) -> list[object]:
-    data_nodes = list(model.network.data_nodes.values())
-    return [*model.network.site_nodes, *data_nodes]
+def _contract_display_network(
+    *,
+    network: ManualMPSNetwork,
+    record: DatasetRecord,
+) -> None:
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"`tensor` is being cropped to fit the shape of node .*",
+            category=UserWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Using a non-tuple sequence for multidimensional indexing.*",
+            category=UserWarning,
+        )
+        network.reset()
+        reference_tensor = network.site_nodes[0].tensor
+        encoded_sample = (
+            encode_spike_train(record.spike_train)
+            .unsqueeze(0)
+            .to(
+                device=reference_tensor.device,
+                dtype=reference_tensor.dtype,
+            )
+        )
+        with torch.no_grad():
+            network(encoded_sample)
+
+
+def _build_visible_contracted_nodes(*, network: ManualMPSNetwork) -> list[object]:
+    data_nodes = list(network.data_nodes.values())
+    return [*network.site_nodes, *data_nodes]
 
 
 def _build_plot_config(
@@ -156,16 +195,37 @@ def _build_plot_config(
     show_contraction_scheme: bool = False,
     contraction_scheme_by_name: tuple[tuple[str, ...], ...] | None = None,
 ) -> PlotConfig:
-    plot_config = PlotConfig(
-        show_contraction_scheme=show_contraction_scheme,
-        contraction_tensor_inspector=True,
-        theme="paper",
-        contraction_scheme_by_name=contraction_scheme_by_name,
-    )
-    tensor_inspector_config = TensorElementsConfig()
-    object.__setattr__(tensor_inspector_config, "theme", "spectral")
-    object.__setattr__(plot_config, "tensor_inspector_config", tensor_inspector_config)
-    return plot_config
+    plot_config_kwargs: dict[str, object] = {
+        "show_contraction_scheme": show_contraction_scheme,
+        "contraction_tensor_inspector": True,
+        "theme": "paper",
+        "contraction_scheme_by_name": contraction_scheme_by_name,
+    }
+    if _supports_keyword_argument(
+        callable_object=TensorElementsConfig,
+        parameter_name="theme",
+    ) and _supports_keyword_argument(
+        callable_object=PlotConfig,
+        parameter_name="tensor_inspector_config",
+    ):
+        plot_config_kwargs["tensor_inspector_config"] = _build_tensor_inspector_config()
+    return PlotConfig(**plot_config_kwargs)
+
+
+def _build_tensor_inspector_config() -> TensorElementsConfig:
+    return TensorElementsConfig(theme="grayscale")
+
+
+def _supports_keyword_argument(
+    *,
+    callable_object: object,
+    parameter_name: str,
+) -> bool:
+    try:
+        signature = inspect.signature(callable_object)
+    except (TypeError, ValueError):
+        return False
+    return parameter_name in signature.parameters
 
 
 def _build_contraction_scheme_by_name(

@@ -6,13 +6,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 import yaml
 
 from spike_mps.config import DatasetConfig, SplitRatios
 from spike_mps.generation import build_dataset_artifacts
 from spike_mps.models.mps_classifier import MPSClassifier, MPSModelConfig
-from spike_mps.training.checkpoints import save_checkpoint
+from spike_mps.runtime import (
+    PROJECT_VENV_REEXEC_ENV_VAR,
+    ensure_project_venv_python,
+)
+from spike_mps.training.checkpoints import load_model_from_checkpoint, save_checkpoint
 from spike_mps.writer import write_dataset_artifacts
 
 
@@ -61,10 +66,12 @@ def test_train_mps_cli_creates_expected_artifacts(workspace_dir: Path) -> None:
     assert metrics["experiment_name"] == "train_cli_example_exp"
     assert metrics["dataset_name"] == "train_cli_example"
     assert metrics["one_hot_penalty_weight"] == 0.5
+    assert metrics["concentration_penalty_weight"] == 0.75
     assert "best_full_loss" in metrics
     assert "full_loss" in metrics
     assert "full_cross_entropy_loss" in metrics
     assert "full_one_hot_penalty" in metrics
+    assert "full_concentration_penalty" in metrics
     assert "full_accuracy" in metrics
     assert "full_target_component_mean" in metrics
     assert "full_off_target_component_mean" in metrics
@@ -85,6 +92,7 @@ def test_train_mps_cli_creates_expected_artifacts(workspace_dir: Path) -> None:
     assert history_rows
     assert "train_cross_entropy_loss" in history_rows[0]
     assert "train_one_hot_penalty" in history_rows[0]
+    assert "train_concentration_penalty" in history_rows[0]
     assert "train_target_component_mean" in history_rows[0]
     assert "train_off_target_component_mean" in history_rows[0]
     assert "train_best_incorrect_component_mean" in history_rows[0]
@@ -92,6 +100,7 @@ def test_train_mps_cli_creates_expected_artifacts(workspace_dir: Path) -> None:
     assert "full_loss" in history_rows[0]
     assert "full_cross_entropy_loss" in history_rows[0]
     assert "full_one_hot_penalty" in history_rows[0]
+    assert "full_concentration_penalty" in history_rows[0]
     assert "full_accuracy" in history_rows[0]
     assert "full_target_component_mean" in history_rows[0]
     assert "full_off_target_component_mean" in history_rows[0]
@@ -258,7 +267,41 @@ def test_canonicalize_mps_cli_saves_exact_canonical_checkpoint(
     assert canonicalize_completed.returncode == 0, canonicalize_completed.stderr
     assert "Accuracy before canonicalization: 1.0000" in canonicalize_completed.stdout
     assert "Accuracy after canonicalization: 1.0000" in canonicalize_completed.stdout
-    assert (checkpoint_path.parent / "checkpoint_canonical.pt").exists()
+    canonical_checkpoint_path = checkpoint_path.parent / "checkpoint_canonical.pt"
+    assert canonical_checkpoint_path.exists()
+    canonical_model, _ = load_model_from_checkpoint(canonical_checkpoint_path)
+    assert canonical_model.config.parameterization == "direct"
+
+
+def test_ensure_project_venv_python_reexecs_when_running_outside_venv(
+    monkeypatch: pytest.MonkeyPatch,
+    workspace_dir: Path,
+) -> None:
+    project_root = workspace_dir / "project"
+    venv_python = project_root / ".venv" / "Scripts" / "python.exe"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("", encoding="utf-8")
+    exec_calls: list[tuple[str, list[str]]] = []
+
+    def _fake_execv(executable: str, argv: list[str]) -> None:
+        exec_calls.append((executable, argv))
+        raise RuntimeError("reexec requested")
+
+    monkeypatch.delenv(PROJECT_VENV_REEXEC_ENV_VAR, raising=False)
+    monkeypatch.setattr(sys, "executable", str(project_root / "python.exe"))
+    monkeypatch.setattr(sys, "argv", ["scripts/visualize_mps.py", "--no-show"])
+    monkeypatch.setattr("os.execv", _fake_execv)
+
+    with pytest.raises(RuntimeError, match="reexec requested"):
+        ensure_project_venv_python(project_root=project_root)
+
+    assert exec_calls == [
+        (
+            str(venv_python),
+            [str(venv_python), "scripts/visualize_mps.py", "--no-show"],
+        )
+    ]
+    assert os.environ[PROJECT_VENV_REEXEC_ENV_VAR] == "1"
 
 
 def _create_dataset_directory(*, workspace_dir: Path, name: str) -> Path:
@@ -304,15 +347,15 @@ def _create_perfect_count_ones_checkpoint(*, workspace_dir: Path) -> Path:
     model.network.site_nodes[0].tensor = torch.tensor(
         [
             [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
         ],
         dtype=torch.float32,
     )
     site_1_tensor = torch.zeros((3, 2, 3), dtype=torch.float32)
     site_1_tensor[0, 0, 0] = 1.0
-    site_1_tensor[0, 1, 1] = 1.0
+    site_1_tensor[0, 1, 1] = -1.0
     site_1_tensor[1, 0, 1] = 1.0
-    site_1_tensor[1, 1, 2] = 1.0
+    site_1_tensor[1, 1, 2] = -1.0
     model.network.site_nodes[1].tensor = site_1_tensor
 
     checkpoint_path = (
@@ -354,6 +397,7 @@ def _write_training_config(
                     "weight_decay": 0.0,
                     "bond_dim": 5,
                     "one_hot_penalty_weight": 0.5,
+                    "concentration_penalty_weight": 0.75,
                     "patience": 2,
                     "device": "cpu",
                     "seed": 7,

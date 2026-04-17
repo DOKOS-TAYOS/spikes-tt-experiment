@@ -20,12 +20,14 @@ from spike_mps.training.checkpoints import (
 )
 from spike_mps.training.data import encode_spike_train, load_dataset_bundle
 from spike_mps.training.runner import (
+    _compute_concentration_penalty,
     _compute_loss_components,
     _compute_output_metrics,
     _is_better_full_checkpoint,
     _reached_perfect_full_accuracy,
 )
 from spike_mps.training.visualization import (
+    _build_plot_config,
     visualize_checkpoint,
     visualize_checkpoint_per_sample,
 )
@@ -87,6 +89,7 @@ def test_mps_classifier_returns_scores_for_each_class() -> None:
     scores = model(batch)
 
     assert scores.shape == (2, 6)
+    assert torch.all(scores >= 0)
 
 
 def test_mps_classifier_builds_one_site_tensor_per_spike_position() -> None:
@@ -144,15 +147,13 @@ def test_prepare_for_training_stabilizes_active_mps_parameters() -> None:
         [encode_spike_train("01010"), encode_spike_train("11100")], dim=0
     )
 
+    parameter_names_before_prepare = {name for name, _ in model.named_parameters()}
     model.prepare_for_training()
     parameter_names_after_prepare = {name for name, _ in model.named_parameters()}
     _ = model(batch)
     parameter_names_after_forward = {name for name, _ in model.named_parameters()}
 
-    assert "network.param_virtual_result_stack" in parameter_names_after_prepare
-    assert "network.param_site_1" not in parameter_names_after_prepare
-    assert "network.param_site_2" not in parameter_names_after_prepare
-    assert "network.param_site_3" not in parameter_names_after_prepare
+    assert parameter_names_after_prepare == parameter_names_before_prepare
     assert parameter_names_after_forward == parameter_names_after_prepare
 
 
@@ -179,11 +180,115 @@ def test_prepare_for_training_allows_optimizer_to_track_active_parameters() -> N
         assert id(parameter) in optimizer_parameter_ids
 
 
-def test_select_predicted_class_uses_largest_absolute_score() -> None:
+def test_squared_positive_forward_matches_manual_contraction_of_squared_tensors() -> (
+    None
+):
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=2,
+            input_dim=2,
+            num_classes=3,
+            bond_dim=3,
+            task="count_ones",
+        )
+    )
+    model.network.site_nodes[0].tensor = torch.nn.Parameter(
+        torch.tensor(
+            [
+                [-1.0, 0.0, 0.0],
+                [0.0, -2.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    model.network.site_nodes[1].tensor = torch.nn.Parameter(
+        torch.tensor(
+            [
+                [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0]],
+                [[0.0, 1.0, 0.0], [0.0, 0.0, -1.0]],
+                [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0]],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    batch = torch.stack(
+        [encode_spike_train("00"), encode_spike_train("11")],
+        dim=0,
+    )
+
+    actual_scores = model(batch)
+    expected_scores = torch.stack(
+        [
+            _manual_length2_scores(
+                site_0=model.network.site_nodes[0].tensor.square(),
+                site_1=model.network.site_nodes[1].tensor.square(),
+                spike_train="00",
+            ),
+            _manual_length2_scores(
+                site_0=model.network.site_nodes[0].tensor.square(),
+                site_1=model.network.site_nodes[1].tensor.square(),
+                spike_train="11",
+            ),
+        ],
+        dim=0,
+    )
+
+    assert torch.allclose(actual_scores, expected_scores)
+
+
+def test_direct_parameterization_uses_stored_tensors_without_squaring() -> None:
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=2,
+            input_dim=2,
+            num_classes=3,
+            bond_dim=3,
+            task="count_ones",
+            parameterization="direct",
+        )
+    )
+    model.network.site_nodes[0].tensor = torch.nn.Parameter(
+        torch.tensor(
+            [
+                [-1.0, 0.0, 0.0],
+                [0.0, -2.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    model.network.site_nodes[1].tensor = torch.nn.Parameter(
+        torch.tensor(
+            [
+                [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0]],
+                [[0.0, 1.0, 0.0], [0.0, 0.0, -1.0]],
+                [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0]],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    batch = torch.stack([encode_spike_train("11")], dim=0)
+
+    actual_scores = model(batch)
+    expected_scores = _manual_length2_scores(
+        site_0=model.network.site_nodes[0].tensor,
+        site_1=model.network.site_nodes[1].tensor,
+        spike_train="11",
+    ).unsqueeze(0)
+    squared_scores = _manual_length2_scores(
+        site_0=model.network.site_nodes[0].tensor.square(),
+        site_1=model.network.site_nodes[1].tensor.square(),
+        spike_train="11",
+    ).unsqueeze(0)
+
+    assert torch.allclose(actual_scores, expected_scores)
+    assert not torch.allclose(actual_scores, squared_scores)
+
+
+def test_select_predicted_class_uses_largest_score() -> None:
     scores = torch.tensor(
         [
-            [-0.1, 0.2, -0.9],
-            [0.5, -0.7, 0.6],
+            [0.1, 0.2, 0.9],
+            [0.5, 0.7, 0.6],
         ],
         dtype=torch.float32,
     )
@@ -193,7 +298,39 @@ def test_select_predicted_class_uses_largest_absolute_score() -> None:
     assert torch.equal(predicted, torch.tensor([2, 1], dtype=torch.long))
 
 
-def test_compute_loss_components_combines_cross_entropy_and_one_hot_penalty() -> None:
+def test_concentration_penalty_is_lower_for_dominant_entries_than_uniform_entries() -> (
+    None
+):
+    dominant_penalty = _compute_concentration_penalty(
+        [
+            torch.tensor([9.0, 1.0, 0.0, 0.0], dtype=torch.float32),
+        ]
+    )
+    uniform_penalty = _compute_concentration_penalty(
+        [
+            torch.tensor([1.0, 1.0, 1.0, 1.0], dtype=torch.float32),
+        ]
+    )
+
+    assert dominant_penalty < uniform_penalty
+
+
+def test_concentration_penalty_is_invariant_to_global_rescaling() -> None:
+    base_penalty = _compute_concentration_penalty(
+        [
+            torch.tensor([2.0, 1.0, 1.0, 0.5], dtype=torch.float32),
+        ]
+    )
+    scaled_penalty = _compute_concentration_penalty(
+        [
+            torch.tensor([20.0, 10.0, 10.0, 5.0], dtype=torch.float32),
+        ]
+    )
+
+    assert torch.isclose(base_penalty, scaled_penalty)
+
+
+def test_compute_loss_components_adds_concentration_penalty() -> None:
     scores = torch.tensor(
         [
             [0.1, 0.9, 0.2],
@@ -203,26 +340,44 @@ def test_compute_loss_components_combines_cross_entropy_and_one_hot_penalty() ->
     )
     labels = torch.tensor([1, 2], dtype=torch.long)
 
-    total_loss, cross_entropy_loss, one_hot_penalty = _compute_loss_components(
+    (
+        total_loss,
+        cross_entropy_loss,
+        one_hot_penalty,
+        concentration_penalty,
+    ) = _compute_loss_components(
+        effective_site_tensors=[
+            torch.tensor([4.0, 1.0, 0.0, 0.0], dtype=torch.float32),
+            torch.tensor([3.0, 1.0, 1.0, 1.0], dtype=torch.float32),
+        ],
         scores=scores,
         labels=labels,
         num_classes=3,
         one_hot_penalty_weight=0.25,
+        concentration_penalty_weight=0.5,
     )
 
-    abs_scores = scores.abs()
-    expected_cross_entropy = nn.CrossEntropyLoss()(abs_scores, labels)
+    expected_cross_entropy = nn.CrossEntropyLoss()(scores, labels)
     expected_penalty = torch.mean(
-        (
-            abs_scores
-            - torch.nn.functional.one_hot(labels, num_classes=3).to(torch.float32)
-        )
+        (scores - torch.nn.functional.one_hot(labels, num_classes=3).to(torch.float32))
         ** 2
+    )
+    expected_concentration_penalty = _compute_concentration_penalty(
+        [
+            torch.tensor([4.0, 1.0, 0.0, 0.0], dtype=torch.float32),
+            torch.tensor([3.0, 1.0, 1.0, 1.0], dtype=torch.float32),
+        ]
     )
 
     assert torch.isclose(cross_entropy_loss, expected_cross_entropy)
     assert torch.isclose(one_hot_penalty, expected_penalty)
-    assert torch.isclose(total_loss, expected_cross_entropy + 0.25 * expected_penalty)
+    assert torch.isclose(concentration_penalty, expected_concentration_penalty)
+    assert torch.isclose(
+        total_loss,
+        expected_cross_entropy
+        + 0.25 * expected_penalty
+        + 0.5 * expected_concentration_penalty,
+    )
 
 
 def test_compute_output_metrics_summarizes_target_and_off_target_components() -> None:
@@ -307,7 +462,71 @@ def test_checkpoint_roundtrip_reconstructs_model_with_same_predictions(
     actual_scores = loaded_model(batch).detach()
 
     assert checkpoint["experiment_name"] == "roundtrip"
+    assert checkpoint["parameterization"] == "squared_positive"
+    assert loaded_model.config.parameterization == "squared_positive"
     assert torch.allclose(expected_scores, actual_scores)
+
+
+def test_legacy_checkpoint_without_parameterization_defaults_to_direct(
+    workspace_dir: Path,
+) -> None:
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=2,
+            input_dim=2,
+            num_classes=3,
+            bond_dim=3,
+            task="count_ones",
+            parameterization="direct",
+        )
+    )
+    model.network.site_nodes[0].tensor = torch.nn.Parameter(
+        torch.tensor(
+            [
+                [-1.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    model.network.site_nodes[1].tensor = torch.nn.Parameter(
+        torch.tensor(
+            [
+                [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0]],
+                [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0]],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    checkpoint_path = workspace_dir / "legacy_checkpoint.pt"
+    torch.save(
+        {
+            "format_version": 1,
+            "experiment_name": "legacy",
+            "dataset_name": "bundle_example",
+            "model_config": {
+                "sequence_length": 2,
+                "input_dim": 2,
+                "num_classes": 3,
+                "bond_dim": 3,
+                "task": "count_ones",
+            },
+            "experiment_config": {"epochs": 1, "bond_dim": 3},
+            "best_epoch": 1,
+            "best_full_loss": 0.5,
+            "metrics": {"full_accuracy": 1.0},
+            "seed": 0,
+            "state_dict": model.state_dict(),
+        },
+        checkpoint_path,
+    )
+    batch = torch.stack([encode_spike_train("11")], dim=0)
+
+    loaded_model, _ = load_model_from_checkpoint(checkpoint_path)
+
+    assert loaded_model.config.parameterization == "direct"
+    assert torch.allclose(loaded_model(batch), model(batch))
 
 
 def test_canonicalize_model_preserves_outputs_and_reduces_bond_dim() -> None:
@@ -327,20 +546,40 @@ def test_canonicalize_model_preserves_outputs_and_reduces_bond_dim() -> None:
     actual_scores = canonical_model(batch).detach()
 
     assert canonical_model.config.bond_dim == (2,)
+    assert canonical_model.config.parameterization == "direct"
     assert torch.allclose(expected_scores, actual_scores)
 
 
-def test_visualize_checkpoint_uses_visible_theme_and_spectral_inspector(
+def test_visualize_checkpoint_uses_visible_theme_and_grayscale_inspector(
     workspace_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = MPSClassifier(
         config=MPSModelConfig(
-            sequence_length=4,
+            sequence_length=2,
             input_dim=2,
-            num_classes=5,
-            bond_dim=5,
+            num_classes=3,
+            bond_dim=3,
             task="count_ones",
+        )
+    )
+    model.network.site_nodes[0].tensor = torch.nn.Parameter(
+        torch.tensor(
+            [
+                [-1.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    model.network.site_nodes[1].tensor = torch.nn.Parameter(
+        torch.tensor(
+            [
+                [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0]],
+                [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0]],
+            ],
+            dtype=torch.float32,
         )
     )
     checkpoint_path = workspace_dir / "checkpoint_best.pt"
@@ -388,7 +627,49 @@ def test_visualize_checkpoint_uses_visible_theme_and_spectral_inspector(
     assert visualized_calls[0]["show"] is False
     assert visualized_calls[0]["config"].theme == "paper"
     assert visualized_calls[0]["config"].contraction_tensor_inspector is True
-    assert visualized_calls[0]["config"].tensor_inspector_config.theme == "spectral"
+    assert visualized_calls[0]["config"].tensor_inspector_config.theme == "grayscale"
+    assert (
+        visualized_calls[0]["config"].tensor_inspector_config.log_magnitude_cmap
+        == "Greys"
+    )
+    assert visualized_calls[0]["config"].tensor_inspector_config.sign_colors == (
+        "#111111",
+        "#D4D4D4",
+        "#FFFFFF",
+    )
+    visualized_network = visualized_calls[0]["network"]
+    assert torch.equal(
+        visualized_network.site_nodes[0].tensor,
+        model.network.site_nodes[0].tensor.square(),
+    )
+
+
+def test_build_plot_config_falls_back_when_tensor_elements_theme_is_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _LegacyTensorElementsConfig:
+        def __init__(self) -> None:
+            self.mode = "auto"
+
+    class _LegacyPlotConfig:
+        def __init__(self, **kwargs: object) -> None:
+            assert "tensor_inspector_config" not in kwargs
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    monkeypatch.setattr(
+        "spike_mps.training.visualization.TensorElementsConfig",
+        _LegacyTensorElementsConfig,
+    )
+    monkeypatch.setattr(
+        "spike_mps.training.visualization.PlotConfig",
+        _LegacyPlotConfig,
+    )
+
+    plot_config = _build_plot_config()
+
+    assert plot_config.contraction_tensor_inspector is True
+    assert not hasattr(plot_config, "tensor_inspector_config")
 
 
 def test_visualize_checkpoint_per_sample_uses_dataset_records_and_contraction_scheme(
@@ -476,7 +757,12 @@ def test_visualize_checkpoint_per_sample_uses_dataset_records_and_contraction_sc
         for call in visualized_calls
     )
     assert all(
-        getattr(call["config"].tensor_inspector_config, "theme", None) == "spectral"
+        getattr(call["config"].tensor_inspector_config, "theme", None) == "grayscale"
+        for call in visualized_calls
+    )
+    assert all(
+        getattr(call["config"].tensor_inspector_config, "log_magnitude_cmap", None)
+        == "Greys"
         for call in visualized_calls
     )
     assert [node.name for node in visualized_calls[0]["network"]] == [
@@ -554,14 +840,25 @@ def _build_perfect_count_ones_length2_model() -> MPSClassifier:
     model.network.site_nodes[0].tensor = torch.tensor(
         [
             [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
         ],
         dtype=torch.float32,
     )
     site_1_tensor = torch.zeros((3, 2, 3), dtype=torch.float32)
     site_1_tensor[0, 0, 0] = 1.0
-    site_1_tensor[0, 1, 1] = 1.0
+    site_1_tensor[0, 1, 1] = -1.0
     site_1_tensor[1, 0, 1] = 1.0
-    site_1_tensor[1, 1, 2] = 1.0
+    site_1_tensor[1, 1, 2] = -1.0
     model.network.site_nodes[1].tensor = site_1_tensor
     return model
+
+
+def _manual_length2_scores(
+    *,
+    site_0: torch.Tensor,
+    site_1: torch.Tensor,
+    spike_train: str,
+) -> torch.Tensor:
+    encoded = encode_spike_train(spike_train)
+    hidden = torch.einsum("i,ir->r", encoded[0], site_0)
+    return torch.einsum("r,i,rio->o", hidden, encoded[1], site_1)

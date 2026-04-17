@@ -14,6 +14,15 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 
+def _ensure_project_venv_python() -> None:
+    from spike_mps.runtime import ensure_project_venv_python
+
+    ensure_project_venv_python(project_root=ROOT)
+
+
+_ensure_project_venv_python()
+
+
 def _run() -> int:
     import argparse
 
