@@ -65,13 +65,13 @@ def test_train_mps_cli_creates_expected_artifacts(workspace_dir: Path) -> None:
     )
     assert metrics["experiment_name"] == "train_cli_example_exp"
     assert metrics["dataset_name"] == "train_cli_example"
-    assert metrics["one_hot_penalty_weight"] == 0.5
-    assert metrics["concentration_penalty_weight"] == 0.75
+    assert metrics["output_concentration_penalty_weight"] == 0.5
+    assert metrics["tensor_concentration_penalty_weight"] == 0.75
     assert "best_full_loss" in metrics
     assert "full_loss" in metrics
     assert "full_cross_entropy_loss" in metrics
-    assert "full_one_hot_penalty" in metrics
-    assert "full_concentration_penalty" in metrics
+    assert "full_output_concentration_penalty" in metrics
+    assert "full_tensor_concentration_penalty" in metrics
     assert "full_accuracy" in metrics
     assert "full_target_component_mean" in metrics
     assert "full_off_target_component_mean" in metrics
@@ -91,16 +91,16 @@ def test_train_mps_cli_creates_expected_artifacts(workspace_dir: Path) -> None:
         history_rows = list(csv.DictReader(file_handle))
     assert history_rows
     assert "train_cross_entropy_loss" in history_rows[0]
-    assert "train_one_hot_penalty" in history_rows[0]
-    assert "train_concentration_penalty" in history_rows[0]
+    assert "train_output_concentration_penalty" in history_rows[0]
+    assert "train_tensor_concentration_penalty" in history_rows[0]
     assert "train_target_component_mean" in history_rows[0]
     assert "train_off_target_component_mean" in history_rows[0]
     assert "train_best_incorrect_component_mean" in history_rows[0]
     assert "train_target_margin_mean" in history_rows[0]
     assert "full_loss" in history_rows[0]
     assert "full_cross_entropy_loss" in history_rows[0]
-    assert "full_one_hot_penalty" in history_rows[0]
-    assert "full_concentration_penalty" in history_rows[0]
+    assert "full_output_concentration_penalty" in history_rows[0]
+    assert "full_tensor_concentration_penalty" in history_rows[0]
     assert "full_accuracy" in history_rows[0]
     assert "full_target_component_mean" in history_rows[0]
     assert "full_off_target_component_mean" in history_rows[0]
@@ -396,8 +396,8 @@ def _write_training_config(
                     "learning_rate": 1e-2,
                     "weight_decay": 0.0,
                     "bond_dim": 5,
-                    "one_hot_penalty_weight": 0.5,
-                    "concentration_penalty_weight": 0.75,
+                    "output_concentration_penalty_weight": 0.5,
+                    "tensor_concentration_penalty_weight": 0.75,
                     "patience": 2,
                     "device": "cpu",
                     "seed": 7,

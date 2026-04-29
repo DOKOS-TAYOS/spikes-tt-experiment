@@ -20,8 +20,8 @@ defaults:
   learning_rate: 0.001
   weight_decay: 0.0
   bond_dim: 6
-  one_hot_penalty_weight: 1.0
-  concentration_penalty_weight: 0.25
+  output_concentration_penalty_weight: 0.25
+  tensor_concentration_penalty_weight: 0.25
   patience: 15
   device: auto
   seed: 42
@@ -35,8 +35,8 @@ For these experiments, set:
 
 - `bond_dim = sequence_length + 1`
 - `num_classes = sequence_length + 1`
-- `one_hot_penalty_weight` to control how strongly the output is pushed toward a one-hot target
-- `concentration_penalty_weight` to control how strongly each effective site tensor is pushed toward a small set of dominant entries
+- `output_concentration_penalty_weight` to control how strongly the output probabilities are pushed toward a single dominant class
+- `tensor_concentration_penalty_weight` to control how strongly each effective site tensor is pushed toward a small set of dominant entries
 
 ## Training command
 
@@ -64,7 +64,7 @@ The trainer loads the corresponding dataset from `datasets/generated/<dataset_na
 
 The model has one site tensor per sequence position. The first tensor carries `input` and `right`, the intermediate tensors carry `left`, `input`, and `right`, and only the last tensor carries the `output` index. For a sequence of length `N`, the classifier uses `bond_dim = N + 1` and `num_classes = N + 1`. The stored trainable values are raw parameters, while the effective tensors used during the forward contraction are their elementwise squares. This makes the training-time MPS positive and removes hidden sign cancellations.
 
-Contracting the network with one encoded spike train produces a nonnegative score vector. Training uses a composite loss made of cross-entropy on the direct scores, a one-hot MSE penalty, and a concentration penalty based on the normalized entropy of each effective site tensor. The predicted class is the index with the largest direct score.
+Contracting the network with one encoded spike train produces a nonnegative score vector. Training uses a composite loss made of multiclass cross-entropy on the direct scores, an output-concentration penalty based on the normalized entropy of the softmax distribution, and a tensor-concentration penalty based on the normalized entropy of each effective site tensor. The predicted class is the index with the largest direct score.
 
 Training and checkpoint selection both use `full.csv`. This is intentional: the experiment is meant to study the fully memorized regime, not held-out generalization.
 
@@ -81,7 +81,7 @@ Artifacts:
 - `metrics.yaml`
 - `confusion_matrix.csv`
 
-`history.csv` stores `train_*` and `full_*` columns for the total loss, the cross-entropy term, the one-hot penalty term, the concentration penalty term, accuracy, target activation, off-target activation, strongest incorrect activation, and target margin. `metrics.yaml` stores the final full-dataset summary, and `confusion_matrix.csv` is computed on the full dataset.
+`history.csv` stores `train_*` and `full_*` columns for the total loss, the cross-entropy term, the output-concentration penalty term, the tensor-concentration penalty term, accuracy, target activation, off-target activation, strongest incorrect activation, and target margin. `metrics.yaml` stores the final full-dataset summary, and `confusion_matrix.csv` is computed on the full dataset.
 
 The training script also prints one short log line per epoch and a final summary block in the console.
 

@@ -29,8 +29,8 @@ from spike_mps.training.data import load_dataset_bundle
 class EpochMetrics:
     loss: float
     cross_entropy_loss: float
-    one_hot_penalty: float
-    concentration_penalty: float
+    output_concentration_penalty: float
+    tensor_concentration_penalty: float
     accuracy: float
     target_component_mean: float
     off_target_component_mean: float
@@ -109,9 +109,12 @@ def run_training_experiment(
             optimizer=optimizer,
             device=device,
             train=True,
-            num_classes=dataset_bundle.num_classes,
-            one_hot_penalty_weight=experiment_config.one_hot_penalty_weight,
-            concentration_penalty_weight=experiment_config.concentration_penalty_weight,
+            output_concentration_penalty_weight=(
+                experiment_config.output_concentration_penalty_weight
+            ),
+            tensor_concentration_penalty_weight=(
+                experiment_config.tensor_concentration_penalty_weight
+            ),
         )
         full_metrics = _run_epoch(
             model=model,
@@ -120,17 +123,24 @@ def run_training_experiment(
             optimizer=None,
             device=device,
             train=False,
-            num_classes=dataset_bundle.num_classes,
-            one_hot_penalty_weight=experiment_config.one_hot_penalty_weight,
-            concentration_penalty_weight=experiment_config.concentration_penalty_weight,
+            output_concentration_penalty_weight=(
+                experiment_config.output_concentration_penalty_weight
+            ),
+            tensor_concentration_penalty_weight=(
+                experiment_config.tensor_concentration_penalty_weight
+            ),
         )
         history_rows.append(
             {
                 "epoch": epoch,
                 "train_loss": train_metrics.loss,
                 "train_cross_entropy_loss": train_metrics.cross_entropy_loss,
-                "train_one_hot_penalty": train_metrics.one_hot_penalty,
-                "train_concentration_penalty": train_metrics.concentration_penalty,
+                "train_output_concentration_penalty": (
+                    train_metrics.output_concentration_penalty
+                ),
+                "train_tensor_concentration_penalty": (
+                    train_metrics.tensor_concentration_penalty
+                ),
                 "full_loss": full_metrics.loss,
                 "train_accuracy": train_metrics.accuracy,
                 "train_target_component_mean": train_metrics.target_component_mean,
@@ -142,8 +152,12 @@ def run_training_experiment(
                 ),
                 "train_target_margin_mean": train_metrics.target_margin_mean,
                 "full_cross_entropy_loss": full_metrics.cross_entropy_loss,
-                "full_one_hot_penalty": full_metrics.one_hot_penalty,
-                "full_concentration_penalty": full_metrics.concentration_penalty,
+                "full_output_concentration_penalty": (
+                    full_metrics.output_concentration_penalty
+                ),
+                "full_tensor_concentration_penalty": (
+                    full_metrics.tensor_concentration_penalty
+                ),
                 "full_accuracy": full_metrics.accuracy,
                 "full_target_component_mean": full_metrics.target_component_mean,
                 "full_off_target_component_mean": (
@@ -183,12 +197,20 @@ def run_training_experiment(
                 metrics={
                     "train_loss": train_metrics.loss,
                     "train_cross_entropy_loss": train_metrics.cross_entropy_loss,
-                    "train_one_hot_penalty": train_metrics.one_hot_penalty,
-                    "train_concentration_penalty": train_metrics.concentration_penalty,
+                    "train_output_concentration_penalty": (
+                        train_metrics.output_concentration_penalty
+                    ),
+                    "train_tensor_concentration_penalty": (
+                        train_metrics.tensor_concentration_penalty
+                    ),
                     "full_loss": full_metrics.loss,
                     "full_cross_entropy_loss": full_metrics.cross_entropy_loss,
-                    "full_one_hot_penalty": full_metrics.one_hot_penalty,
-                    "full_concentration_penalty": full_metrics.concentration_penalty,
+                    "full_output_concentration_penalty": (
+                        full_metrics.output_concentration_penalty
+                    ),
+                    "full_tensor_concentration_penalty": (
+                        full_metrics.tensor_concentration_penalty
+                    ),
                     "train_accuracy": train_metrics.accuracy,
                     "train_target_component_mean": (
                         train_metrics.target_component_mean
@@ -232,9 +254,12 @@ def run_training_experiment(
         optimizer=None,
         device=device,
         train=False,
-        num_classes=dataset_bundle.num_classes,
-        one_hot_penalty_weight=experiment_config.one_hot_penalty_weight,
-        concentration_penalty_weight=experiment_config.concentration_penalty_weight,
+        output_concentration_penalty_weight=(
+            experiment_config.output_concentration_penalty_weight
+        ),
+        tensor_concentration_penalty_weight=(
+            experiment_config.tensor_concentration_penalty_weight
+        ),
     )
     _log_final_summary(full_metrics=full_metrics)
 
@@ -254,9 +279,11 @@ def run_training_experiment(
             "sequence_length": dataset_bundle.sequence_length,
             "num_classes": dataset_bundle.num_classes,
             "bond_dim": experiment_config.bond_dim,
-            "one_hot_penalty_weight": experiment_config.one_hot_penalty_weight,
-            "concentration_penalty_weight": (
-                experiment_config.concentration_penalty_weight
+            "output_concentration_penalty_weight": (
+                experiment_config.output_concentration_penalty_weight
+            ),
+            "tensor_concentration_penalty_weight": (
+                experiment_config.tensor_concentration_penalty_weight
             ),
             "device": str(device),
             "best_epoch": checkpoint["best_epoch"],
@@ -264,8 +291,12 @@ def run_training_experiment(
             "best_full_loss": checkpoint["best_full_loss"],
             "full_loss": full_metrics.loss,
             "full_cross_entropy_loss": full_metrics.cross_entropy_loss,
-            "full_one_hot_penalty": full_metrics.one_hot_penalty,
-            "full_concentration_penalty": full_metrics.concentration_penalty,
+            "full_output_concentration_penalty": (
+                full_metrics.output_concentration_penalty
+            ),
+            "full_tensor_concentration_penalty": (
+                full_metrics.tensor_concentration_penalty
+            ),
             "full_accuracy": full_metrics.accuracy,
             "full_target_component_mean": full_metrics.target_component_mean,
             "full_off_target_component_mean": (full_metrics.off_target_component_mean),
@@ -288,9 +319,8 @@ def _run_epoch(
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
     train: bool,
-    num_classes: int,
-    one_hot_penalty_weight: float,
-    concentration_penalty_weight: float,
+    output_concentration_penalty_weight: float,
+    tensor_concentration_penalty_weight: float,
 ) -> EpochMetrics:
     if train:
         model.train()
@@ -299,8 +329,8 @@ def _run_epoch(
 
     total_loss = 0.0
     total_cross_entropy_loss = 0.0
-    total_one_hot_penalty = 0.0
-    total_concentration_penalty = 0.0
+    total_output_concentration_penalty = 0.0
+    total_tensor_concentration_penalty = 0.0
     total_examples = 0
     correct_predictions = 0
     total_target_component = 0.0
@@ -322,15 +352,18 @@ def _run_epoch(
             (
                 loss,
                 cross_entropy_loss,
-                one_hot_penalty,
-                concentration_penalty,
+                output_concentration_penalty,
+                tensor_concentration_penalty,
             ) = _compute_loss_components(
                 effective_site_tensors=model.effective_site_tensors(),
                 scores=scores,
                 labels=labels,
-                num_classes=num_classes,
-                one_hot_penalty_weight=one_hot_penalty_weight,
-                concentration_penalty_weight=concentration_penalty_weight,
+                output_concentration_penalty_weight=(
+                    output_concentration_penalty_weight
+                ),
+                tensor_concentration_penalty_weight=(
+                    tensor_concentration_penalty_weight
+                ),
                 criterion=criterion,
             )
             if train and optimizer is not None:
@@ -342,8 +375,12 @@ def _run_epoch(
         output_metrics = _compute_output_metrics(scores=scores, labels=labels)
         total_loss += loss.item() * batch_size
         total_cross_entropy_loss += cross_entropy_loss.item() * batch_size
-        total_one_hot_penalty += one_hot_penalty.item() * batch_size
-        total_concentration_penalty += concentration_penalty.item() * batch_size
+        total_output_concentration_penalty += (
+            output_concentration_penalty.item() * batch_size
+        )
+        total_tensor_concentration_penalty += (
+            tensor_concentration_penalty.item() * batch_size
+        )
         total_examples += batch_size
         correct_predictions += int((predictions == labels).sum().item())
         total_target_component += output_metrics["target_component_mean"] * batch_size
@@ -359,14 +396,18 @@ def _run_epoch(
 
     average_loss = total_loss / max(total_examples, 1)
     average_cross_entropy_loss = total_cross_entropy_loss / max(total_examples, 1)
-    average_one_hot_penalty = total_one_hot_penalty / max(total_examples, 1)
-    average_concentration_penalty = total_concentration_penalty / max(total_examples, 1)
+    average_output_concentration_penalty = total_output_concentration_penalty / max(
+        total_examples, 1
+    )
+    average_tensor_concentration_penalty = total_tensor_concentration_penalty / max(
+        total_examples, 1
+    )
     accuracy = correct_predictions / max(total_examples, 1)
     return EpochMetrics(
         loss=average_loss,
         cross_entropy_loss=average_cross_entropy_loss,
-        one_hot_penalty=average_one_hot_penalty,
-        concentration_penalty=average_concentration_penalty,
+        output_concentration_penalty=average_output_concentration_penalty,
+        tensor_concentration_penalty=average_tensor_concentration_penalty,
         accuracy=accuracy,
         target_component_mean=total_target_component / max(total_examples, 1),
         off_target_component_mean=total_off_target_component / max(total_examples, 1),
@@ -386,27 +427,42 @@ def _compute_loss_components(
     effective_site_tensors: list[torch.Tensor],
     scores: torch.Tensor,
     labels: torch.Tensor,
-    num_classes: int,
-    one_hot_penalty_weight: float,
-    concentration_penalty_weight: float,
+    output_concentration_penalty_weight: float,
+    tensor_concentration_penalty_weight: float,
     criterion: nn.Module | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     resolved_criterion = criterion if criterion is not None else nn.CrossEntropyLoss()
     cross_entropy_loss = resolved_criterion(scores, labels)
-    one_hot_targets = F.one_hot(labels, num_classes=num_classes).to(torch.float32)
-    one_hot_penalty = F.mse_loss(scores, one_hot_targets)
-    concentration_penalty = _compute_concentration_penalty(
+    output_concentration_penalty = _compute_output_concentration_penalty(scores)
+    tensor_concentration_penalty = _compute_tensor_concentration_penalty(
         effective_site_tensors=effective_site_tensors
     )
     total_loss = (
         cross_entropy_loss
-        + one_hot_penalty_weight * one_hot_penalty
-        + concentration_penalty_weight * concentration_penalty
+        + output_concentration_penalty_weight * output_concentration_penalty
+        + tensor_concentration_penalty_weight * tensor_concentration_penalty
     )
-    return total_loss, cross_entropy_loss, one_hot_penalty, concentration_penalty
+    return (
+        total_loss,
+        cross_entropy_loss,
+        output_concentration_penalty,
+        tensor_concentration_penalty,
+    )
 
 
-def _compute_concentration_penalty(
+def _compute_output_concentration_penalty(
+    scores: torch.Tensor,
+    *,
+    eps: float = 1e-12,
+) -> torch.Tensor:
+    if scores.shape[1] <= 1:
+        return scores.new_tensor(0.0)
+    probabilities = torch.softmax(scores, dim=1)
+    entropy = -(probabilities * torch.log(probabilities + eps)).sum(dim=1)
+    return (entropy / math.log(float(scores.shape[1]))).mean()
+
+
+def _compute_tensor_concentration_penalty(
     effective_site_tensors: list[torch.Tensor],
     *,
     eps: float = 1e-12,
@@ -455,16 +511,16 @@ def _log_epoch(
         f"Epoch {epoch}/{total_epochs} | "
         f"train loss={train_metrics.loss:.4f} "
         f"ce={train_metrics.cross_entropy_loss:.4f} "
-        f"one_hot={train_metrics.one_hot_penalty:.4f} "
-        f"conc={train_metrics.concentration_penalty:.4f} "
+        f"out_conc={train_metrics.output_concentration_penalty:.4f} "
+        f"tensor_conc={train_metrics.tensor_concentration_penalty:.4f} "
         f"acc={train_metrics.accuracy:.4f} "
         f"target={train_metrics.target_component_mean:.4f} "
         f"off={train_metrics.off_target_component_mean:.4f} "
         f"margin={train_metrics.target_margin_mean:.4f} | "
         f"full loss={full_metrics.loss:.4f} "
         f"ce={full_metrics.cross_entropy_loss:.4f} "
-        f"one_hot={full_metrics.one_hot_penalty:.4f} "
-        f"conc={full_metrics.concentration_penalty:.4f} "
+        f"out_conc={full_metrics.output_concentration_penalty:.4f} "
+        f"tensor_conc={full_metrics.tensor_concentration_penalty:.4f} "
         f"acc={full_metrics.accuracy:.4f} "
         f"target={full_metrics.target_component_mean:.4f} "
         f"off={full_metrics.off_target_component_mean:.4f} "
@@ -481,8 +537,14 @@ def _log_final_summary(*, full_metrics: EpochMetrics) -> None:
     )
     print(f"  total_loss: {full_metrics.loss:.4f}")
     print(f"  cross_entropy_loss: {full_metrics.cross_entropy_loss:.4f}")
-    print(f"  one_hot_penalty: {full_metrics.one_hot_penalty:.4f}")
-    print(f"  concentration_penalty: {full_metrics.concentration_penalty:.4f}")
+    print(
+        "  output_concentration_penalty: "
+        f"{full_metrics.output_concentration_penalty:.4f}"
+    )
+    print(
+        "  tensor_concentration_penalty: "
+        f"{full_metrics.tensor_concentration_penalty:.4f}"
+    )
     print(f"  target_component_mean: {full_metrics.target_component_mean:.4f}")
     print(f"  off_target_component_mean: {full_metrics.off_target_component_mean:.4f}")
     print(
@@ -531,8 +593,8 @@ def _write_history(
         "epoch",
         "train_loss",
         "train_cross_entropy_loss",
-        "train_one_hot_penalty",
-        "train_concentration_penalty",
+        "train_output_concentration_penalty",
+        "train_tensor_concentration_penalty",
         "full_loss",
         "train_accuracy",
         "train_target_component_mean",
@@ -540,8 +602,8 @@ def _write_history(
         "train_best_incorrect_component_mean",
         "train_target_margin_mean",
         "full_cross_entropy_loss",
-        "full_one_hot_penalty",
-        "full_concentration_penalty",
+        "full_output_concentration_penalty",
+        "full_tensor_concentration_penalty",
         "full_accuracy",
         "full_target_component_mean",
         "full_off_target_component_mean",

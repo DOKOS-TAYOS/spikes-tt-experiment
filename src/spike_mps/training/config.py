@@ -20,8 +20,8 @@ class TrainingExperimentConfig:
     learning_rate: float
     weight_decay: float
     bond_dim: int
-    one_hot_penalty_weight: float
-    concentration_penalty_weight: float
+    output_concentration_penalty_weight: float
+    tensor_concentration_penalty_weight: float
     patience: int
     device: DeviceName
     seed: int
@@ -41,10 +41,14 @@ class TrainingExperimentConfig:
             raise ValueError("weight_decay must be non-negative.")
         if self.bond_dim <= 0:
             raise ValueError("bond_dim must be greater than zero.")
-        if self.one_hot_penalty_weight < 0:
-            raise ValueError("one_hot_penalty_weight must be non-negative.")
-        if self.concentration_penalty_weight < 0:
-            raise ValueError("concentration_penalty_weight must be non-negative.")
+        if self.output_concentration_penalty_weight < 0:
+            raise ValueError(
+                "output_concentration_penalty_weight must be non-negative."
+            )
+        if self.tensor_concentration_penalty_weight < 0:
+            raise ValueError(
+                "tensor_concentration_penalty_weight must be non-negative."
+            )
         if self.patience <= 0:
             raise ValueError("patience must be greater than zero.")
         if self.device not in _VALID_DEVICES:
@@ -59,8 +63,12 @@ class TrainingExperimentConfig:
             "learning_rate": self.learning_rate,
             "weight_decay": self.weight_decay,
             "bond_dim": self.bond_dim,
-            "one_hot_penalty_weight": self.one_hot_penalty_weight,
-            "concentration_penalty_weight": self.concentration_penalty_weight,
+            "output_concentration_penalty_weight": (
+                self.output_concentration_penalty_weight
+            ),
+            "tensor_concentration_penalty_weight": (
+                self.tensor_concentration_penalty_weight
+            ),
             "patience": self.patience,
             "device": self.device,
             "seed": self.seed,
@@ -144,19 +152,44 @@ def _build_experiment_config(
             raw_experiment.get("weight_decay", defaults.get("weight_decay", 0.0))
         ),
         bond_dim=int(raw_experiment.get("bond_dim", defaults.get("bond_dim", 8))),
-        one_hot_penalty_weight=float(
-            raw_experiment.get(
-                "one_hot_penalty_weight",
-                defaults.get("one_hot_penalty_weight", 0.25),
+        output_concentration_penalty_weight=float(
+            _resolve_training_value(
+                raw_experiment=raw_experiment,
+                defaults=defaults,
+                key="output_concentration_penalty_weight",
+                legacy_key="one_hot_penalty_weight",
+                fallback=0.25,
             )
         ),
-        concentration_penalty_weight=float(
-            raw_experiment.get(
-                "concentration_penalty_weight",
-                defaults.get("concentration_penalty_weight", 0.0),
+        tensor_concentration_penalty_weight=float(
+            _resolve_training_value(
+                raw_experiment=raw_experiment,
+                defaults=defaults,
+                key="tensor_concentration_penalty_weight",
+                legacy_key="concentration_penalty_weight",
+                fallback=0.0,
             )
         ),
         patience=int(raw_experiment.get("patience", defaults.get("patience", 50))),
         device=str(raw_experiment.get("device", defaults.get("device", "auto"))),
         seed=int(raw_experiment.get("seed", defaults.get("seed", 0))),
     )
+
+
+def _resolve_training_value(
+    *,
+    raw_experiment: dict[str, Any],
+    defaults: dict[str, Any],
+    key: str,
+    legacy_key: str,
+    fallback: Any,
+) -> Any:
+    if key in raw_experiment:
+        return raw_experiment[key]
+    if legacy_key in raw_experiment:
+        return raw_experiment[legacy_key]
+    if key in defaults:
+        return defaults[key]
+    if legacy_key in defaults:
+        return defaults[legacy_key]
+    return fallback

@@ -85,8 +85,8 @@ For the current length-5 experiments, set:
 
 - `bond_dim = sequence_length + 1 = 6`
 - `num_classes = sequence_length + 1 = 6`
-- `one_hot_penalty_weight = 1.0`
-- `concentration_penalty_weight = 0.25`
+- `output_concentration_penalty_weight = 0.25`
+- `tensor_concentration_penalty_weight = 0.25`
 
 Train `count_ones`:
 
@@ -100,7 +100,7 @@ Training uses `full.csv` both for optimization and for the checkpoint selection 
 
 The classifier is implemented as a manual `tensorkrowch` tensor network with one site tensor per spike-train position. The first tensor carries only `input` and `right`, the intermediate tensors carry `left`, `input`, and `right`, and only the last tensor carries the class `output` index. The stored trainable values are now raw parameters, but the effective tensors used in the MPS contraction are their elementwise squares. This makes the training-time MPS strictly nonnegative and removes sign cancellations from the forward pass.
 
-After contracting the network with an encoded spike train, the model returns one nonnegative score per category. Training uses a composite objective with three terms: cross-entropy on the direct scores, an MSE penalty that pushes the full output vector toward a one-hot target, and a concentration penalty based on the normalized entropy of each effective site tensor so that the network tends to place most of its mass in a small number of entries. Prediction chooses the category with the largest direct score.
+After contracting the network with an encoded spike train, the model returns one nonnegative score per category. Training uses a composite objective with three terms: multiclass cross-entropy on the direct scores, an output-concentration penalty that minimizes the normalized entropy of the softmax distribution so one class tends to dominate clearly, and a tensor-concentration penalty based on the normalized entropy of each effective site tensor so that the network tends to place most of its mass in a small number of entries. Prediction chooses the category with the largest direct score.
 
 During training, the console now prints one compact line per epoch with the loss split, including the concentration term, together with accuracy, target activation, off-target activation, and target margin. At the end it also prints a final summary over the full dataset. The same metrics are written to `history.csv` and `metrics.yaml`.
 

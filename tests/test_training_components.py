@@ -20,9 +20,10 @@ from spike_mps.training.checkpoints import (
 )
 from spike_mps.training.data import encode_spike_train, load_dataset_bundle
 from spike_mps.training.runner import (
-    _compute_concentration_penalty,
     _compute_loss_components,
+    _compute_output_concentration_penalty,
     _compute_output_metrics,
+    _compute_tensor_concentration_penalty,
     _is_better_full_checkpoint,
     _reached_perfect_full_accuracy,
 )
@@ -301,12 +302,12 @@ def test_select_predicted_class_uses_largest_score() -> None:
 def test_concentration_penalty_is_lower_for_dominant_entries_than_uniform_entries() -> (
     None
 ):
-    dominant_penalty = _compute_concentration_penalty(
+    dominant_penalty = _compute_tensor_concentration_penalty(
         [
             torch.tensor([9.0, 1.0, 0.0, 0.0], dtype=torch.float32),
         ]
     )
-    uniform_penalty = _compute_concentration_penalty(
+    uniform_penalty = _compute_tensor_concentration_penalty(
         [
             torch.tensor([1.0, 1.0, 1.0, 1.0], dtype=torch.float32),
         ]
@@ -316,12 +317,12 @@ def test_concentration_penalty_is_lower_for_dominant_entries_than_uniform_entrie
 
 
 def test_concentration_penalty_is_invariant_to_global_rescaling() -> None:
-    base_penalty = _compute_concentration_penalty(
+    base_penalty = _compute_tensor_concentration_penalty(
         [
             torch.tensor([2.0, 1.0, 1.0, 0.5], dtype=torch.float32),
         ]
     )
-    scaled_penalty = _compute_concentration_penalty(
+    scaled_penalty = _compute_tensor_concentration_penalty(
         [
             torch.tensor([20.0, 10.0, 10.0, 5.0], dtype=torch.float32),
         ]
@@ -330,7 +331,34 @@ def test_concentration_penalty_is_invariant_to_global_rescaling() -> None:
     assert torch.isclose(base_penalty, scaled_penalty)
 
 
-def test_compute_loss_components_adds_concentration_penalty() -> None:
+def test_output_concentration_penalty_is_lower_for_peaked_logits_than_flat_logits() -> (
+    None
+):
+    peaked_penalty = _compute_output_concentration_penalty(
+        torch.tensor(
+            [
+                [6.0, 0.0, -2.0],
+                [-1.0, 5.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    flat_penalty = _compute_output_concentration_penalty(
+        torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.1, 0.1, 0.1],
+            ],
+            dtype=torch.float32,
+        )
+    )
+
+    assert peaked_penalty < flat_penalty
+
+
+def test_compute_loss_components_adds_output_and_tensor_concentration_penalties() -> (
+    None
+):
     scores = torch.tensor(
         [
             [0.1, 0.9, 0.2],
@@ -343,8 +371,8 @@ def test_compute_loss_components_adds_concentration_penalty() -> None:
     (
         total_loss,
         cross_entropy_loss,
-        one_hot_penalty,
-        concentration_penalty,
+        output_concentration_penalty,
+        tensor_concentration_penalty,
     ) = _compute_loss_components(
         effective_site_tensors=[
             torch.tensor([4.0, 1.0, 0.0, 0.0], dtype=torch.float32),
@@ -352,17 +380,15 @@ def test_compute_loss_components_adds_concentration_penalty() -> None:
         ],
         scores=scores,
         labels=labels,
-        num_classes=3,
-        one_hot_penalty_weight=0.25,
-        concentration_penalty_weight=0.5,
+        output_concentration_penalty_weight=0.25,
+        tensor_concentration_penalty_weight=0.5,
     )
 
     expected_cross_entropy = nn.CrossEntropyLoss()(scores, labels)
-    expected_penalty = torch.mean(
-        (scores - torch.nn.functional.one_hot(labels, num_classes=3).to(torch.float32))
-        ** 2
+    expected_output_concentration_penalty = _compute_output_concentration_penalty(
+        scores
     )
-    expected_concentration_penalty = _compute_concentration_penalty(
+    expected_tensor_concentration_penalty = _compute_tensor_concentration_penalty(
         [
             torch.tensor([4.0, 1.0, 0.0, 0.0], dtype=torch.float32),
             torch.tensor([3.0, 1.0, 1.0, 1.0], dtype=torch.float32),
@@ -370,13 +396,17 @@ def test_compute_loss_components_adds_concentration_penalty() -> None:
     )
 
     assert torch.isclose(cross_entropy_loss, expected_cross_entropy)
-    assert torch.isclose(one_hot_penalty, expected_penalty)
-    assert torch.isclose(concentration_penalty, expected_concentration_penalty)
+    assert torch.isclose(
+        output_concentration_penalty, expected_output_concentration_penalty
+    )
+    assert torch.isclose(
+        tensor_concentration_penalty, expected_tensor_concentration_penalty
+    )
     assert torch.isclose(
         total_loss,
         expected_cross_entropy
-        + 0.25 * expected_penalty
-        + 0.5 * expected_concentration_penalty,
+        + 0.25 * expected_output_concentration_penalty
+        + 0.5 * expected_tensor_concentration_penalty,
     )
 
 
