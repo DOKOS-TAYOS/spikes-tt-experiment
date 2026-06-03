@@ -40,13 +40,13 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 addopts = "-ra -p no:cacheprovider"
-norecursedirs = [".git", ".tmp", ".venv", "_avast_", "pytest-cache-files-*"]
+norecursedirs = [".git", ".tmp", ".venv", ".worktrees", "_avast_", "pytest-cache-files-*"]
 
 [tool.ruff]
 line-length = 88
 target-version = "py312"
 force-exclude = true
-exclude = [".git", ".tmp", ".venv", "_avast_", "pytest-cache-files-*"]
+exclude = [".git", ".tmp", ".venv", ".worktrees", "_avast_", "pytest-cache-files-*"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
