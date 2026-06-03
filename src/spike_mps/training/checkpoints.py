@@ -5,6 +5,7 @@ from typing import Any
 
 import torch
 
+from spike_mps.filesystem import open_binary_for_read, open_binary_for_write
 from spike_mps.models.mps_classifier import MPSClassifier, MPSModelConfig
 
 FORMAT_VERSION = 2
@@ -35,8 +36,8 @@ def save_checkpoint(
         "seed": seed,
         "state_dict": _build_raw_site_state_dict(model=model),
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(checkpoint, path)
+    with open_binary_for_write(path) as file_handle:
+        torch.save(checkpoint, file_handle)
 
 
 def load_checkpoint(
@@ -44,7 +45,8 @@ def load_checkpoint(
     *,
     map_location: str | torch.device = "cpu",
 ) -> dict[str, Any]:
-    return torch.load(path, map_location=map_location, weights_only=False)
+    with open_binary_for_read(path) as file_handle:
+        return torch.load(file_handle, map_location=map_location, weights_only=False)
 
 
 def load_model_from_checkpoint(

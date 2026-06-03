@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,13 @@ from spike_mps.training.checkpoints import (
     load_model_from_checkpoint,
     save_checkpoint,
 )
+from spike_mps.training.concentration import (
+    CheckpointConcentrationResult,
+    apply_bond_transform,
+    compute_magnitude_entropy,
+    concentrate_model,
+    optimize_bond_transform,
+)
 from spike_mps.training.data import encode_spike_train, load_dataset_bundle
 from spike_mps.training.runner import (
     _compute_loss_components,
@@ -25,7 +33,9 @@ from spike_mps.training.runner import (
     _compute_output_metrics,
     _compute_tensor_concentration_penalty,
     _is_better_full_checkpoint,
+    _maybe_run_post_training_concentration,
     _reached_perfect_full_accuracy,
+    _write_confusion_matrix,
 )
 from spike_mps.training.visualization import (
     _build_plot_config,
@@ -497,6 +507,62 @@ def test_checkpoint_roundtrip_reconstructs_model_with_same_predictions(
     assert torch.allclose(expected_scores, actual_scores)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows path-length regression test.")
+def test_checkpoint_roundtrip_supports_long_windows_paths(
+    workspace_dir: Path,
+) -> None:
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=2,
+            input_dim=2,
+            num_classes=3,
+            bond_dim=3,
+            task="count_ones",
+        )
+    )
+    checkpoint_path = _build_long_windows_path(
+        workspace_dir=workspace_dir,
+        filename="checkpoint_best.pt",
+    )
+    assert len(str(checkpoint_path.resolve())) > 260
+
+    save_checkpoint(
+        path=checkpoint_path,
+        model=model,
+        experiment_name="long_path",
+        dataset_name="bundle_example",
+        experiment_config={"epochs": 1, "bond_dim": 3},
+        best_epoch=1,
+        best_full_loss=0.5,
+        metrics={"full_accuracy": 0.8},
+        seed=123,
+    )
+    loaded_model, checkpoint = load_model_from_checkpoint(checkpoint_path)
+
+    assert checkpoint["experiment_name"] == "long_path"
+    assert loaded_model.config.parameterization == "squared_positive"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path-length regression test.")
+def test_confusion_matrix_writer_supports_long_windows_paths(
+    workspace_dir: Path,
+) -> None:
+    matrix_path = _build_long_windows_path(
+        workspace_dir=workspace_dir,
+        filename="confusion_matrix.csv",
+    )
+    assert len(str(matrix_path.resolve())) > 260
+
+    _write_confusion_matrix(
+        path=matrix_path,
+        labels=[0, 1, 1],
+        predictions=[0, 1, 0],
+        num_classes=2,
+    )
+
+    assert os.path.exists(_as_windows_long_path(matrix_path))
+
+
 def test_legacy_checkpoint_without_parameterization_defaults_to_direct(
     workspace_dir: Path,
 ) -> None:
@@ -578,6 +644,165 @@ def test_canonicalize_model_preserves_outputs_and_reduces_bond_dim() -> None:
     assert canonical_model.config.bond_dim == (2,)
     assert canonical_model.config.parameterization == "direct"
     assert torch.allclose(expected_scores, actual_scores)
+
+
+def test_orthogonal_bond_transform_preserves_mps_scores() -> None:
+    torch.manual_seed(0)
+    site_tensors = [
+        torch.randn((2, 3), dtype=torch.float64),
+        torch.randn((3, 2, 3), dtype=torch.float64),
+        torch.randn((3, 2, 4), dtype=torch.float64),
+    ]
+    u_matrix, _ = torch.linalg.qr(torch.randn((3, 3), dtype=torch.float64))
+    transformed_tensors = apply_bond_transform(
+        site_tensors=site_tensors,
+        bond_index=0,
+        u_matrix=u_matrix,
+    )
+    batch = torch.stack(
+        [
+            encode_spike_train("000"),
+            encode_spike_train("101"),
+            encode_spike_train("111"),
+        ],
+        dim=0,
+    ).to(torch.float64)
+
+    expected_scores = _scores_from_direct_site_tensors(
+        site_tensors=site_tensors,
+        batch=batch,
+    )
+    actual_scores = _scores_from_direct_site_tensors(
+        site_tensors=transformed_tensors,
+        batch=batch,
+    )
+
+    assert torch.allclose(actual_scores, expected_scores, atol=1e-10)
+
+
+def test_optimize_bond_transform_reduces_left_tensor_magnitude_entropy() -> None:
+    site_tensor = torch.tensor([[1.0, 1.0]], dtype=torch.float64)
+    before = compute_magnitude_entropy(site_tensor)
+
+    result = optimize_bond_transform(
+        site_tensor=site_tensor,
+        steps=120,
+        learning_rate=0.1,
+        restarts=1,
+        seed=0,
+    )
+    transformed_tensor = torch.tensordot(site_tensor, result.u_matrix, dims=([-1], [0]))
+    after = compute_magnitude_entropy(transformed_tensor)
+
+    assert after < before - 0.2
+    assert torch.allclose(
+        result.u_matrix.T @ result.u_matrix,
+        torch.eye(2, dtype=torch.float64),
+        atol=1e-10,
+    )
+
+
+def test_concentrate_model_preserves_outputs_and_uses_direct_parameterization() -> None:
+    model = _build_perfect_count_ones_length2_model()
+    batch = torch.stack(
+        [
+            encode_spike_train("00"),
+            encode_spike_train("01"),
+            encode_spike_train("10"),
+            encode_spike_train("11"),
+        ],
+        dim=0,
+    )
+    expected_scores = model(batch).detach()
+
+    result = concentrate_model(
+        model=model,
+        steps=20,
+        learning_rate=0.05,
+        restarts=1,
+        seed=0,
+    )
+    actual_scores = result.model(batch).detach()
+
+    assert result.model.config.parameterization == "direct"
+    assert torch.allclose(actual_scores, expected_scores, atol=1e-5)
+    assert result.concentration_after <= result.concentration_before + 1e-8
+
+
+def test_post_training_concentration_runs_only_after_perfect_accuracy(
+    workspace_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint_path = workspace_dir / "checkpoint_best.pt"
+    output_path = workspace_dir / "checkpoint_concentrated.pt"
+    calls: list[dict[str, object]] = []
+
+    def _fake_concentrate_checkpoint(
+        *,
+        checkpoint_path: Path,
+        output_path: Path | None,
+        steps: int,
+        learning_rate: float,
+        restarts: int,
+        seed: int,
+    ) -> CheckpointConcentrationResult:
+        calls.append(
+            {
+                "checkpoint_path": checkpoint_path,
+                "output_path": output_path,
+                "steps": steps,
+                "learning_rate": learning_rate,
+                "restarts": restarts,
+                "seed": seed,
+            }
+        )
+        return CheckpointConcentrationResult(
+            output_path=output_path
+            or checkpoint_path.with_name("checkpoint_concentrated.pt"),
+            accuracy_before=1.0,
+            accuracy_after=1.0,
+            concentration_before=0.8,
+            concentration_after=0.4,
+            max_score_difference=1e-7,
+        )
+
+    monkeypatch.setattr(
+        "spike_mps.training.runner.concentrate_checkpoint",
+        _fake_concentrate_checkpoint,
+    )
+
+    skipped_metrics = _maybe_run_post_training_concentration(
+        checkpoint_path=checkpoint_path,
+        full_accuracy=0.75,
+        enabled=True,
+        steps=7,
+        learning_rate=0.02,
+        restarts=3,
+        seed=11,
+    )
+    concentration_metrics = _maybe_run_post_training_concentration(
+        checkpoint_path=checkpoint_path,
+        full_accuracy=1.0,
+        enabled=True,
+        steps=7,
+        learning_rate=0.02,
+        restarts=3,
+        seed=11,
+    )
+
+    assert skipped_metrics is None
+    assert len(calls) == 1
+    assert calls[0]["checkpoint_path"] == checkpoint_path
+    assert calls[0]["output_path"] == output_path
+    assert calls[0]["steps"] == 7
+    assert concentration_metrics == {
+        "post_training_concentration_output_path": str(output_path),
+        "post_training_concentration_accuracy_before": 1.0,
+        "post_training_concentration_accuracy_after": 1.0,
+        "post_training_concentration_before": 0.8,
+        "post_training_concentration_after": 0.4,
+        "post_training_concentration_max_score_difference": 1e-7,
+    }
 
 
 def test_visualization_network_forward_matches_model_forward() -> None:
@@ -954,3 +1179,36 @@ def _manual_length2_scores(
     encoded = encode_spike_train(spike_train)
     hidden = torch.einsum("i,ir->r", encoded[0], site_0)
     return torch.einsum("r,i,rio->o", hidden, encoded[1], site_1)
+
+
+def _scores_from_direct_site_tensors(
+    *,
+    site_tensors: list[torch.Tensor],
+    batch: torch.Tensor,
+) -> torch.Tensor:
+    model = MPSClassifier(
+        config=MPSModelConfig(
+            sequence_length=len(site_tensors),
+            input_dim=2,
+            num_classes=int(site_tensors[-1].shape[-1]),
+            bond_dim=tuple(int(tensor.shape[-1]) for tensor in site_tensors[:-1]),
+            task="count_ones",
+            parameterization="direct",
+        ),
+        dtype=batch.dtype,
+    )
+    for node, tensor in zip(model.network.site_nodes, site_tensors, strict=True):
+        node.tensor = tensor
+    return model(batch)
+
+
+def _build_long_windows_path(*, workspace_dir: Path, filename: str) -> Path:
+    long_segment = "very_long_artifact_directory_name_" + "x" * 80
+    return workspace_dir / long_segment / long_segment / long_segment / filename
+
+
+def _as_windows_long_path(path: Path) -> str:
+    path_text = str(path.resolve())
+    if path_text.startswith("\\\\?\\"):
+        return path_text
+    return "\\\\?\\" + path_text

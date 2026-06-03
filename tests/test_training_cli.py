@@ -67,6 +67,11 @@ def test_train_mps_cli_creates_expected_artifacts(workspace_dir: Path) -> None:
     assert metrics["dataset_name"] == "train_cli_example"
     assert metrics["output_concentration_penalty_weight"] == 0.5
     assert metrics["tensor_concentration_penalty_weight"] == 0.75
+    assert metrics["post_training_concentration_enabled"] is False
+    assert metrics["post_training_concentration_steps"] == 5
+    assert metrics["post_training_concentration_learning_rate"] == 0.05
+    assert metrics["post_training_concentration_restarts"] == 1
+    assert metrics["post_training_concentration_output_path"] is None
     assert "best_full_loss" in metrics
     assert "full_loss" in metrics
     assert "full_cross_entropy_loss" in metrics
@@ -268,9 +273,46 @@ def test_canonicalize_mps_cli_saves_exact_canonical_checkpoint(
     assert "Accuracy before canonicalization: 1.0000" in canonicalize_completed.stdout
     assert "Accuracy after canonicalization: 1.0000" in canonicalize_completed.stdout
     canonical_checkpoint_path = checkpoint_path.parent / "checkpoint_canonical.pt"
-    assert canonical_checkpoint_path.exists()
+    assert _artifact_exists(canonical_checkpoint_path)
     canonical_model, _ = load_model_from_checkpoint(canonical_checkpoint_path)
     assert canonical_model.config.parameterization == "direct"
+
+
+def test_concentrate_mps_cli_saves_direct_concentrated_checkpoint(
+    workspace_dir: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    checkpoint_path = _create_perfect_count_ones_checkpoint(workspace_dir=workspace_dir)
+
+    concentrate_completed = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "concentrate_mps.py"),
+            "--checkpoint",
+            str(checkpoint_path),
+            "--steps",
+            "20",
+            "--learning-rate",
+            "0.05",
+            "--restarts",
+            "1",
+            "--seed",
+            "0",
+        ],
+        check=False,
+        cwd=workspace_dir,
+        capture_output=True,
+        text=True,
+        env=_pythonpath_env(repo_root),
+    )
+
+    assert concentrate_completed.returncode == 0, concentrate_completed.stderr
+    assert "Accuracy before concentration: 1.0000" in concentrate_completed.stdout
+    assert "Accuracy after concentration: 1.0000" in concentrate_completed.stdout
+    concentrated_checkpoint_path = checkpoint_path.parent / "checkpoint_concentrated.pt"
+    assert _artifact_exists(concentrated_checkpoint_path)
+    concentrated_model, _ = load_model_from_checkpoint(concentrated_checkpoint_path)
+    assert concentrated_model.config.parameterization == "direct"
 
 
 def test_ensure_project_venv_python_reexecs_when_running_outside_venv(
@@ -398,6 +440,10 @@ def _write_training_config(
                     "bond_dim": 5,
                     "output_concentration_penalty_weight": 0.5,
                     "tensor_concentration_penalty_weight": 0.75,
+                    "post_training_concentration_enabled": False,
+                    "post_training_concentration_steps": 5,
+                    "post_training_concentration_learning_rate": 0.05,
+                    "post_training_concentration_restarts": 1,
                     "patience": 2,
                     "device": "cpu",
                     "seed": 7,
@@ -420,3 +466,12 @@ def _pythonpath_env(repo_root: Path) -> dict[str, str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(repo_root / "src")
     return env
+
+
+def _artifact_exists(path: Path) -> bool:
+    if os.name != "nt":
+        return path.exists()
+    path_text = str(path.resolve())
+    if path_text.startswith("\\\\?\\"):
+        return os.path.exists(path_text)
+    return os.path.exists("\\\\?\\" + path_text)

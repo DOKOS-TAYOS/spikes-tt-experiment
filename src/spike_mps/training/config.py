@@ -22,6 +22,10 @@ class TrainingExperimentConfig:
     bond_dim: int
     output_concentration_penalty_weight: float
     tensor_concentration_penalty_weight: float
+    post_training_concentration_enabled: bool
+    post_training_concentration_steps: int
+    post_training_concentration_learning_rate: float
+    post_training_concentration_restarts: int
     patience: int
     device: DeviceName
     seed: int
@@ -49,12 +53,22 @@ class TrainingExperimentConfig:
             raise ValueError(
                 "tensor_concentration_penalty_weight must be non-negative."
             )
+        if self.post_training_concentration_steps < 0:
+            raise ValueError("post_training_concentration_steps must be non-negative.")
+        if self.post_training_concentration_learning_rate <= 0:
+            raise ValueError(
+                "post_training_concentration_learning_rate must be greater than zero."
+            )
+        if self.post_training_concentration_restarts <= 0:
+            raise ValueError(
+                "post_training_concentration_restarts must be greater than zero."
+            )
         if self.patience <= 0:
             raise ValueError("patience must be greater than zero.")
         if self.device not in _VALID_DEVICES:
             raise ValueError(f"Unknown device: {self.device}")
 
-    def to_dict(self) -> dict[str, int | float | str]:
+    def to_dict(self) -> dict[str, int | float | str | bool]:
         return {
             "name": self.name,
             "dataset_name": self.dataset_name,
@@ -68,6 +82,18 @@ class TrainingExperimentConfig:
             ),
             "tensor_concentration_penalty_weight": (
                 self.tensor_concentration_penalty_weight
+            ),
+            "post_training_concentration_enabled": (
+                self.post_training_concentration_enabled
+            ),
+            "post_training_concentration_steps": (
+                self.post_training_concentration_steps
+            ),
+            "post_training_concentration_learning_rate": (
+                self.post_training_concentration_learning_rate
+            ),
+            "post_training_concentration_restarts": (
+                self.post_training_concentration_restarts
             ),
             "patience": self.patience,
             "device": self.device,
@@ -170,6 +196,42 @@ def _build_experiment_config(
                 fallback=0.0,
             )
         ),
+        post_training_concentration_enabled=_coerce_bool(
+            _resolve_training_value(
+                raw_experiment=raw_experiment,
+                defaults=defaults,
+                key="post_training_concentration_enabled",
+                legacy_key="post_training_concentration_enabled",
+                fallback=True,
+            )
+        ),
+        post_training_concentration_steps=int(
+            _resolve_training_value(
+                raw_experiment=raw_experiment,
+                defaults=defaults,
+                key="post_training_concentration_steps",
+                legacy_key="post_training_concentration_steps",
+                fallback=200,
+            )
+        ),
+        post_training_concentration_learning_rate=float(
+            _resolve_training_value(
+                raw_experiment=raw_experiment,
+                defaults=defaults,
+                key="post_training_concentration_learning_rate",
+                legacy_key="post_training_concentration_learning_rate",
+                fallback=0.05,
+            )
+        ),
+        post_training_concentration_restarts=int(
+            _resolve_training_value(
+                raw_experiment=raw_experiment,
+                defaults=defaults,
+                key="post_training_concentration_restarts",
+                legacy_key="post_training_concentration_restarts",
+                fallback=4,
+            )
+        ),
         patience=int(raw_experiment.get("patience", defaults.get("patience", 50))),
         device=str(raw_experiment.get("device", defaults.get("device", "auto"))),
         seed=int(raw_experiment.get("seed", defaults.get("seed", 0))),
@@ -193,3 +255,15 @@ def _resolve_training_value(
     if legacy_key in defaults:
         return defaults[legacy_key]
     return fallback
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized_value = value.strip().lower()
+        if normalized_value in {"true", "1", "yes", "y"}:
+            return True
+        if normalized_value in {"false", "0", "no", "n"}:
+            return False
+    raise ValueError(f"Expected a boolean value, got {value!r}.")

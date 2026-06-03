@@ -52,6 +52,7 @@ The project currently includes:
 - generated reference datasets for the three rule-based tasks with sequence length `5`,
 - dataset metadata stored alongside each generated dataset,
 - an MPS training pipeline based on `tensorkrowch` and `PyTorch`,
+- post-training orthogonal bond concentration for analysis checkpoints,
 - checkpoint reload plus interactive tensor-network visualization.
 
 The generator writes datasets to `datasets/generated/<dataset_name>/` as CSV files plus a `metadata.yaml` summary.
@@ -87,6 +88,7 @@ For the current length-5 experiments, set:
 - `num_classes = sequence_length + 1 = 6`
 - `output_concentration_penalty_weight = 0.25`
 - `tensor_concentration_penalty_weight = 0.25`
+- `post_training_concentration_enabled = true`
 
 Train `count_ones`:
 
@@ -103,6 +105,8 @@ The classifier is implemented as a manual `tensorkrowch` tensor network with one
 After contracting the network with an encoded spike train, the model returns one nonnegative score per category. Training uses a composite objective with three terms: multiclass cross-entropy on the direct scores, an output-concentration penalty that minimizes the normalized entropy of the softmax distribution so one class tends to dominate clearly, and a tensor-concentration penalty based on the normalized entropy of each effective site tensor so that the network tends to place most of its mass in a small number of entries. Prediction chooses the category with the largest direct score.
 
 During training, the console now prints one compact line per epoch with the loss split, including the concentration term, together with accuracy, target activation, off-target activation, and target margin. At the end it also prints a final summary over the full dataset. The same metrics are written to `history.csv` and `metrics.yaml`.
+
+If the final best checkpoint reaches `full_accuracy = 1.0`, training also runs a post-training concentration sweep. This inserts orthogonal `U` and `U.T` changes of basis along each MPS bond, optimizes each `U` to concentrate the mass of the left tensor, verifies that accuracy and scores are preserved, and saves `checkpoint_concentrated.pt` as a `direct` analysis checkpoint.
 
 ## Interactive Visualization
 
@@ -158,6 +162,18 @@ the positive squared parameterization, the command first canonicalizes the
 effective positive tensors and then saves the canonicalized network as a
 `direct` checkpoint. That canonical form may contain signs internally, while the
 original training checkpoint remains a positive-MPS checkpoint.
+
+## Post-Training Concentration
+
+You can also apply the concentration sweep manually to an existing checkpoint:
+
+```bash
+python scripts/concentrate_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt
+```
+
+By default, the command writes `checkpoint_concentrated.pt` next to the input checkpoint. It requires the source checkpoint to reach `1.0` accuracy on `full.csv`, applies a left-to-right sweep of orthogonal bond transforms, checks that the concentrated model still reaches `1.0`, and refuses to save if the output scores change beyond the allowed tolerance.
+
+The concentrated checkpoint is saved with `parameterization: direct`, because the optimized orthogonal basis changes may introduce signs even when the original training checkpoint used squared positive tensors.
 
 The training and visualization workflow is documented in `docs/training_visualization.md`.
 

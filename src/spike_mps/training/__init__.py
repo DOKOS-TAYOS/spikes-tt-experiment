@@ -4,6 +4,10 @@ from spike_mps.training.canonicalization import (
     canonicalize_checkpoint,
     canonicalize_model,
 )
+from spike_mps.training.concentration import (
+    concentrate_checkpoint,
+    concentrate_model,
+)
 from spike_mps.training.runner import run_training_experiment
 from spike_mps.training.visualization import (
     visualize_checkpoint,
@@ -13,6 +17,8 @@ from spike_mps.training.visualization import (
 __all__ = [
     "canonicalize_checkpoint",
     "canonicalize_model",
+    "concentrate_checkpoint",
+    "concentrate_model",
     "run_training_experiment",
     "visualize_checkpoint",
     "visualize_checkpoint_per_sample",

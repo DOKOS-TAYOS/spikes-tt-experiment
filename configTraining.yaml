@@ -6,6 +6,10 @@ defaults:
   bond_dim: 5
   output_concentration_penalty_weight: 0.25
   tensor_concentration_penalty_weight: 0.25
+  post_training_concentration_enabled: true
+  post_training_concentration_steps: 200
+  post_training_concentration_learning_rate: 0.05
+  post_training_concentration_restarts: 4
   patience: 50
   device: auto
   seed: 40

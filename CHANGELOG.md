@@ -6,3 +6,5 @@
 - Kept and renamed the internal tensor regularization as `tensor_concentration_penalty`, so the training objective now distinguishes clearly between output concentration and tensor concentration.
 - Updated `configTraining.yaml`, saved metrics, training logs, and documentation to use the new penalty names:
   `output_concentration_penalty_weight` and `tensor_concentration_penalty_weight`.
+- Added post-training orthogonal bond concentration, including automatic execution after perfect training runs and a manual `scripts/concentrate_mps.py` checkpoint command.
+- Added Windows long-path-safe artifact writing for checkpoints and training outputs.

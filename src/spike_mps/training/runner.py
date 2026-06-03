@@ -12,12 +12,14 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
+from spike_mps.filesystem import open_text_for_write
 from spike_mps.models.mps_classifier import (
     MPSClassifier,
     MPSModelConfig,
     select_predicted_class,
 )
 from spike_mps.training.checkpoints import load_model_from_checkpoint, save_checkpoint
+from spike_mps.training.concentration import concentrate_checkpoint
 from spike_mps.training.config import (
     get_experiment_config,
     load_training_config,
@@ -262,6 +264,19 @@ def run_training_experiment(
         ),
     )
     _log_final_summary(full_metrics=full_metrics)
+    post_training_concentration_metrics = _empty_post_training_concentration_metrics()
+    post_training_concentration_metrics.update(
+        _maybe_run_post_training_concentration(
+            checkpoint_path=checkpoint_path,
+            full_accuracy=full_metrics.accuracy,
+            enabled=experiment_config.post_training_concentration_enabled,
+            steps=experiment_config.post_training_concentration_steps,
+            learning_rate=experiment_config.post_training_concentration_learning_rate,
+            restarts=experiment_config.post_training_concentration_restarts,
+            seed=experiment_config.seed,
+        )
+        or {}
+    )
 
     _write_history(path=experiment_dir / "history.csv", history_rows=history_rows)
     _write_confusion_matrix(
@@ -285,6 +300,18 @@ def run_training_experiment(
             "tensor_concentration_penalty_weight": (
                 experiment_config.tensor_concentration_penalty_weight
             ),
+            "post_training_concentration_enabled": (
+                experiment_config.post_training_concentration_enabled
+            ),
+            "post_training_concentration_steps": (
+                experiment_config.post_training_concentration_steps
+            ),
+            "post_training_concentration_learning_rate": (
+                experiment_config.post_training_concentration_learning_rate
+            ),
+            "post_training_concentration_restarts": (
+                experiment_config.post_training_concentration_restarts
+            ),
             "device": str(device),
             "best_epoch": checkpoint["best_epoch"],
             "best_full_accuracy": best_full_accuracy,
@@ -306,6 +333,7 @@ def run_training_experiment(
             "full_target_margin_mean": full_metrics.target_margin_mean,
             "full_correct_predictions": full_metrics.correct_predictions,
             "full_total_examples": full_metrics.total_examples,
+            **post_training_concentration_metrics,
         },
     )
     return checkpoint_path
@@ -572,6 +600,59 @@ def _reached_perfect_full_accuracy(full_accuracy: float) -> bool:
     return full_accuracy >= 1.0
 
 
+def _maybe_run_post_training_concentration(
+    *,
+    checkpoint_path: Path,
+    full_accuracy: float,
+    enabled: bool,
+    steps: int,
+    learning_rate: float,
+    restarts: int,
+    seed: int,
+) -> dict[str, float | str] | None:
+    if not enabled:
+        print("Post-training concentration is disabled. Skipping.")
+        return None
+    if not _reached_perfect_full_accuracy(full_accuracy):
+        print(
+            "Skipping post-training concentration because full accuracy is "
+            f"{full_accuracy:.4f}, not 1.0000."
+        )
+        return None
+
+    output_path = checkpoint_path.with_name("checkpoint_concentrated.pt")
+    result = concentrate_checkpoint(
+        checkpoint_path=checkpoint_path,
+        output_path=output_path,
+        steps=steps,
+        learning_rate=learning_rate,
+        restarts=restarts,
+        seed=seed,
+    )
+    print(f"Saved concentrated checkpoint to {result.output_path}")
+    return {
+        "post_training_concentration_output_path": str(result.output_path),
+        "post_training_concentration_accuracy_before": result.accuracy_before,
+        "post_training_concentration_accuracy_after": result.accuracy_after,
+        "post_training_concentration_before": result.concentration_before,
+        "post_training_concentration_after": result.concentration_after,
+        "post_training_concentration_max_score_difference": (
+            result.max_score_difference
+        ),
+    }
+
+
+def _empty_post_training_concentration_metrics() -> dict[str, float | str | None]:
+    return {
+        "post_training_concentration_output_path": None,
+        "post_training_concentration_accuracy_before": None,
+        "post_training_concentration_accuracy_after": None,
+        "post_training_concentration_before": None,
+        "post_training_concentration_after": None,
+        "post_training_concentration_max_score_difference": None,
+    }
+
+
 def _log_perfect_accuracy_stop(*, epoch: int) -> None:
     print(f"Reached perfect full accuracy at epoch {epoch}. Stopping early.")
 
@@ -610,7 +691,7 @@ def _write_history(
         "full_best_incorrect_component_mean",
         "full_target_margin_mean",
     ]
-    with path.open("w", encoding="utf-8", newline="") as file_handle:
+    with open_text_for_write(path, newline="") as file_handle:
         writer = csv.DictWriter(file_handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(history_rows)
@@ -627,7 +708,7 @@ def _write_confusion_matrix(
     for label, prediction in zip(labels, predictions, strict=True):
         matrix[label][prediction] += 1
 
-    with path.open("w", encoding="utf-8", newline="") as file_handle:
+    with open_text_for_write(path, newline="") as file_handle:
         writer = csv.writer(file_handle)
         header = ["true/pred"] + [str(index) for index in range(num_classes)]
         writer.writerow(header)
@@ -636,4 +717,5 @@ def _write_confusion_matrix(
 
 
 def _write_metrics(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    with open_text_for_write(path) as file_handle:
+        yaml.safe_dump(payload, file_handle, sort_keys=False)

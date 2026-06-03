@@ -22,6 +22,10 @@ defaults:
   bond_dim: 6
   output_concentration_penalty_weight: 0.25
   tensor_concentration_penalty_weight: 0.25
+  post_training_concentration_enabled: true
+  post_training_concentration_steps: 200
+  post_training_concentration_learning_rate: 0.05
+  post_training_concentration_restarts: 4
   patience: 15
   device: auto
   seed: 42
@@ -37,6 +41,7 @@ For these experiments, set:
 - `num_classes = sequence_length + 1`
 - `output_concentration_penalty_weight` to control how strongly the output probabilities are pushed toward a single dominant class
 - `tensor_concentration_penalty_weight` to control how strongly each effective site tensor is pushed toward a small set of dominant entries
+- `post_training_concentration_enabled` to save a concentrated analysis checkpoint automatically after a perfect run
 
 ## Training command
 
@@ -77,11 +82,12 @@ Each experiment writes to:
 Artifacts:
 
 - `checkpoint_best.pt`
+- `checkpoint_concentrated.pt` when post-training concentration runs successfully
 - `history.csv`
 - `metrics.yaml`
 - `confusion_matrix.csv`
 
-`history.csv` stores `train_*` and `full_*` columns for the total loss, the cross-entropy term, the output-concentration penalty term, the tensor-concentration penalty term, accuracy, target activation, off-target activation, strongest incorrect activation, and target margin. `metrics.yaml` stores the final full-dataset summary, and `confusion_matrix.csv` is computed on the full dataset.
+`history.csv` stores `train_*` and `full_*` columns for the total loss, the cross-entropy term, the output-concentration penalty term, the tensor-concentration penalty term, accuracy, target activation, off-target activation, strongest incorrect activation, and target margin. `metrics.yaml` stores the final full-dataset summary, post-training concentration settings and results, and `confusion_matrix.csv` is computed on the full dataset.
 
 The training script also prints one short log line per epoch and a final summary block in the console.
 
@@ -114,6 +120,20 @@ python scripts/visualize_mps.py --checkpoint output/processed_data/experiments/m
 ```
 
 The project does not implement a separate tensor inspector. It reconstructs the trained `tensorkrowch` model and delegates visualization to `show_tensor_network` from `tensor-network-visualization`. For positive training checkpoints, the visualization shows the effective squared tensors used by the forward pass.
+
+## Post-training concentration
+
+When `post_training_concentration_enabled` is true, `train_mps.py` automatically attempts a concentration sweep after training only if the best checkpoint reaches `1.0` accuracy on `full.csv`. If accuracy is lower, the command prints that the step was skipped.
+
+The sweep works left to right across the MPS bonds. On bond `i`, it optimizes an orthogonal matrix `U = matrix_exp(S - S.T)` so that multiplying tensor `i` by `U` concentrates its absolute mass into fewer entries. The next tensor receives `U.T`, which is the inverse because `U` is orthogonal, so the full MPS contraction is preserved.
+
+The saved artifact is `checkpoint_concentrated.pt` with `parameterization: direct`. The command verifies that full accuracy remains `1.0` and that the maximum absolute score difference stays within tolerance before saving.
+
+You can run the same step manually:
+
+```bash
+python scripts/concentrate_mps.py --checkpoint output/processed_data/experiments/mps_length5_count_ones/checkpoint_best.pt
+```
 
 ## Post-training canonicalization
 
