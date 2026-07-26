@@ -198,3 +198,16 @@ At this stage, the repository is meant to define the experimental direction clea
 - and what kind of interpretability signal will be searched for after optimization.
 
 The repository now has the first complete path from synthetic dataset generation to MPS training, checkpointing, and later visualization of the learned tensor network.
+
+## License
+
+This project is released under the [MIT License](LICENSE). Third-party
+dependencies keep their own licenses; see [NOTICE](NOTICE).
+
+## Citing
+
+If you use this software in scholarly work, cite this repository
+([`CITATION.cff`](CITATION.cff)). Training depends on TensorKrowch
+(https://github.com/joserapa98/tensorkrowch; arXiv:2306.08595) and PyTorch;
+runtime visualization uses tensor-network-visualization. See `NOTICE` for
+dependency license notes.

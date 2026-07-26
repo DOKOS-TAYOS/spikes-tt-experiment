@@ -1,0 +1,25 @@
+spikes-tt-experiment / spike-mps-experiment
+Copyright (c) 2026 Alejandro Mata Ali
+
+This project is released under the MIT License (see LICENSE).
+
+Third-party runtime and development dependencies remain under their own
+licenses and terms. Installing this package does not relicense those
+dependencies. Review each dependency's license before redistribution.
+
+Key dependencies and typical licenses (verify with the installed package):
+
+- PyTorch (torch) — BSD-style (see the PyTorch project license notices)
+- TensorKrowch (tensorkrowch) — MIT (https://github.com/joserapa98/tensorkrowch)
+- tensor-network-visualization — MIT
+  (https://github.com/DOKOS-TAYOS/Tensor-Network-Visualization)
+- matplotlib — matplotlib license (PSF-based / BSD-compatible terms)
+- PyYAML — MIT
+- pytest, ruff (optional dev extras) — MIT
+
+No third-party library source trees are vendored in this repository. Imports
+of torch, tensorkrowch, tensor_network_viz, and the scientific Python stack
+are ordinary package dependencies.
+
+Datasets under datasets/generated/ are synthetic spike trains produced by this
+repository's own generation pipeline; they are not third-party data products.

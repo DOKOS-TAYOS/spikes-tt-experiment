@@ -1,0 +1,48 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite it and acknowledge the methods and
+  libraries listed in README.md and NOTICE.
+title: "spikes-tt-experiment (spike-mps-experiment)"
+type: software
+authors:
+  - family-names: Mata Ali
+    given-names: Alejandro
+license: MIT
+version: 0.1.0
+repository-code: "https://github.com/DOKOS-TAYOS/spikes-tt-experiment"
+abstract: >-
+  Reproducible experiment studying whether Matrix Product State classifiers
+  trained on synthetic binary spike trains with known rule-based labels retain
+  interpretable internal tensor structure.
+keywords:
+  - tensor networks
+  - matrix product states
+  - spike trains
+  - explainability
+  - TensorKrowch
+  - PyTorch
+references:
+  - type: article
+    title: "TensorKrowch: Smooth integration of tensor networks in machine learning"
+    authors:
+      - family-names: Pareja Monturiol
+        given-names: José Ramón
+      - family-names: Pérez-García
+        given-names: David
+      - family-names: Pozas-Kerstjens
+        given-names: Alejandro
+    year: 2024
+    journal: "Quantum"
+    volume: "8"
+    pages: "1364"
+    doi: "10.22331/q-2024-06-11-1364"
+    url: "https://arxiv.org/abs/2306.08595"
+    notes: Primary tensor-network training backend (tensorkrowch).
+  - type: software
+    title: "PyTorch"
+    notes: Autograd and neural-network runtime dependency.
+    url: "https://pytorch.org/"
+  - type: software
+    title: "tensor-network-visualization"
+    notes: Interactive MPS visualization dependency used after training.
+    url: "https://github.com/DOKOS-TAYOS/Tensor-Network-Visualization"
